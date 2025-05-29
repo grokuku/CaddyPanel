@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  caddypanel: # Service name changed
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: caddypanel:latest # Image name changed
+    container_name: caddypanel-instance # Container name changed
+    ports:
+      - "81:80"
+      - "444:443"
+      - "5000:5000" # Port Flask (configurable via FLASK_PORT dans le Dockerfile/supervisord)
+      # - "2019:2019" # Décommentez pour exposer l'API admin de Caddy (non recommandé en prod sans sécurité)
+    volumes:
+      # Assurez-vous que ces dossiers existent sur l'hôte ou Docker les créera avec les permissions root.
+      # L'entrypoint.sh dans le conteneur s'occupera des permissions internes pour appuser.
+      - ./caddy_config_on_host:/etc/caddy   # Pour le Caddyfile et les configurations spécifiques de Caddy
+      - ./caddy_data_on_host:/data/caddy     # Pour les certificats ACME et autres données persistantes de Caddy
+      - ./app_data_on_host:/app_data       # Pour preferences.json et users.json de Flask
+    
+    # Pour les variables d'environnement sensibles comme FLASK_SECRET_KEY,
+    # utilisez un fichier .env à la racine de votre projet (où se trouve ce docker-compose.yml).
+    # Ce fichier .env ne doit PAS être versionné (ajoutez-le à .gitignore).
+    # Exemple de contenu pour .env:
+    # FLASK_SECRET_KEY=votre_super_cle_secrete_tres_longue_et_aleatoire
+    # TZ=Europe/Paris
+    env_file:
+      - .env # Docker Compose cherchera un fichier nommé .env dans le même dossier
+    
+    # Vous pouvez toujours surcharger ou ajouter des variables d'environnement ici si nécessaire,
+    # mais celles du .env auront la priorité si elles y sont définies.
+    # Exemple: si TZ n'est pas dans .env, vous pouvez le mettre ici:
+    # environment:
+    #   - TZ=Europe/Paris # Déjà défini dans .env via env_file, donc redondant ici
+
+    restart: unless-stopped
+    
+    networks:
+      - dockernet
+
+networks:
+  dockernet:
+    external: true

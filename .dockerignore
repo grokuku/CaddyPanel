@@ -1,0 +1,58 @@
+# C2RPM/.dockerignore (ou plutôt à la racine du projet, donc .dockerignore)
+# Ce fichier doit être à la racine du contexte de build (le dossier où vous lancez docker build)
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+.venv/
+env/
+.env # Ne pas inclure les fichiers .env locaux dans l'image
+pip-wheel-metadata/
+pip-selfcheck.json
+
+# Docker
+Dockerfile # Si vous avez des Dockerfile de test ou autres
+docker-compose.yml # Idem
+caddy_config_on_host/
+caddy_data_on_host/
+app_data_on_host/
+
+# IDE / OS specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Documentation inutile dans l'image (si plan.md est dans C2RPM)
+# Si plan.md est à la racine du projet, et que C2RPM est un sous-dossier,
+# et que le contexte de build est la racine, alors C2RPM/plan.md sera copié
+# par COPY C2RPM/ ./ dans /app. Si on ne veut pas le plan.md dans l'image :
+# C2RPM/plan.md
+# Cependant, le plan.md fourni dans la liste initiale est dans C2RPM/plan.md
+# et le Dockerfile est à la racine, donc il sera copié sous C2RPM/plan.md DANS l'image.
+# Pour l'exclure:
+C2RPM/plan.md
+
+
+# Fichiers de données exemple qui sont copiés par l'entrypoint depuis l'image
+# mais que nous ne voulons peut-être pas directement dans le WORKDIR si d'autres
+# copies sont plus spécifiques. Actuellement, ils sont nécessaires dans /app
+# pour que l'entrypoint.sh fonctionne (ex: DEFAULT_PREFS_PATH="${FLASK_APP_DIR}/preferences.json")
+# Donc ne pas les ignorer ici si la stratégie de copie reste la même.
+# C2RPM/preferences.json
+# C2RPM/users.json
+# C2RPM/caddyfile/Caddyfile
+
+# Si vous avez des tests que vous ne voulez pas dans l'image de production
+# tests/

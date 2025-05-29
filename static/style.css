@@ -1,0 +1,296 @@
+/*
+Mode d'emploi:
+Description: Feuille de style CSS pour l'interface de configuration Caddyfile.
+Fonctionnalités:
+    - Styles de base (body, headings, forms).
+    - Styles pour les onglets.
+    - Styles pour les thèmes (Pastel Light & Darker Dark).
+    - Styles pour le tableau de configuration des sites.
+    - Styles pour le modal d'édition/ajout de site.
+    - Styles pour le navigateur de fichiers.
+    - Styles pour les messages flash (maintenant toasts).
+*/
+
+body {
+    font-family: sans-serif;
+    line-height: 1.6;
+    margin: 20px;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+h1, h2 {
+    color: #0056b3; /* Caddy blue */
+    margin-bottom: 15px;
+}
+h3 { margin-top: 1.2em; margin-bottom: 0.8em; }
+h4 { margin-top: 1em; margin-bottom: 0.6em; font-size: 1.1em; }
+
+
+h1 {
+    text-align: center;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 10px;
+}
+
+form {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+/* Remove default form styling for main config form as it's just a container now */
+#configurator-tab > form#caddy-config-form {
+    background-color: transparent;
+    padding: 0;
+    box-shadow: none;
+    margin-bottom: 0;
+}
+
+
+.form-group {
+    margin-bottom: 10px; /* Reduced margin */
+}
+
+/* Style for inline checkbox/label */
+.form-group-inline label {
+    display: inline-block; /* Keep label inline */
+    margin-left: 5px;
+    margin-bottom: 0;
+    font-weight: normal; /* Normal weight for checkbox labels */
+}
+.form-group-inline input[type="checkbox"] {
+     vertical-align: middle; /* Align checkbox with label */
+}
+
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="password"], /* Added for login/setup */
+.form-group select,
+.form-group textarea { /* Added for raw output */
+    width: calc(100% - 22px); /* Adjust for padding and border */
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em; /* Ensure consistent font size */
+}
+
+.form-group input[type="checkbox"] {
+    margin-right: 5px;
+}
+
+button, .action-btn { /* Style action buttons similarly */
+    background-color: #007bff; /* Standard blue */
+    color: white;
+    padding: 8px 15px; /* Adjusted padding */
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95em; /* Slightly smaller */
+    transition: background-color 0.3s ease;
+    text-decoration: none; /* For link-styled buttons */
+    display: inline-block; /* Align properly */
+    vertical-align: middle;
+    margin: 2px; /* Add small margin */
+}
+
+button:hover, .action-btn:hover {
+    background-color: #0056b3;
+    opacity: 0.9;
+}
+
+/* Specific button styles */
+.add-remove-btn { /* General class for add/remove */
+     padding: 5px 10px;
+     font-size: 0.9em;
+}
+#add-host-btn { /* Specific Add Host button */
+     background-color: #28a745; /* Green */
+     border-color: #218838;
+}
+#add-host-btn:hover { background-color: #218838; }
+
+.edit-btn { background-color: #ffc107; color: #333; border-color: #e0a800; } /* Yellow */
+.edit-btn:hover { background-color: #e0a800; }
+.delete-btn { background-color: #dc3545; border-color: #c82333; } /* Red */
+.delete-btn:hover { background-color: #c82333; }
+.stats-btn { background-color: #17a2b8; border-color: #138496; } /* Info blue/cyan */
+.stats-btn:hover { background-color: #138496; }
+
+
+/* --- Tab Styles --- */
+.tab-container { width: 100%; border: 1px solid #ccc; background-color: #f9f9f9; border-radius: 8px; overflow: hidden; }
+.tab-buttons { overflow: hidden; border-bottom: 1px solid #ccc; background-color: #e9ecef; }
+.tab-buttons button { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; font-size: 1em; color: #333; border-radius: 0; border-right: 1px solid #ccc; }
+.tab-buttons button:last-child { border-right: none; }
+.tab-buttons button:hover { background-color: #ddd; }
+.tab-buttons button.active { background-color: #ccc; font-weight: bold; }
+.tab-content { padding: 20px; border-top: none; background-color: #fff; display: none; }
+#preferences-tab small { display: block; margin-top: 5px; color: #666; font-size: 0.9em; }
+/* #prefs-saved-message { margin-top: 10px; } */ /* Remplacé par toasts */
+
+
+/* --- Theme Styles --- */
+/* ... (copiez ici tous vos styles de thèmes existants .theme-light-blue, .theme-dark-blue, etc.) ... */
+/* --- Light Themes (Pastel) --- */
+.theme-light-blue { background-color: #f0f8ff; color: #4682b4; } .theme-light-blue h1, .theme-light-blue h2 { color: #5f9ea0; } .theme-light-blue form, .theme-light-blue .tab-content { background-color: #f8fcff; border-color: #b0c4de; } .theme-light-blue .tab-container { border-color: #add8e6; } .theme-light-blue .tab-buttons { background-color: #e0f0ff; border-bottom-color: #add8e6; } .theme-light-blue .tab-buttons button { color: #4682b4; border-right-color: #c0d4e8; } .theme-light-blue .tab-buttons button:hover { background-color: #d0e0f0; } .theme-light-blue .tab-buttons button.active { background-color: #b0c4de; } .theme-light-blue #caddyfile-output { background-color: #e6f2ff; border-color: #b0c4de; color: #4682b4; } .theme-light-blue button { background-color: #6495ed; color: white; } .theme-light-blue button:hover { background-color: #4169e1; } .theme-light-blue input, .theme-light-blue select, .theme-light-blue textarea { border-color: #b0c4de; background-color: #fff; color: #4682b4; } .theme-light-blue small { color: #5f9ea0; } .theme-light-blue #sites-table th { background-color: #e0f0ff; } .theme-light-blue #sites-table td, .theme-light-blue #sites-table th { border-color: #c0d4e8; } .theme-light-blue .modal-content { background-color: #f8fcff; border-color: #add8e6; }
+.theme-light-green { background-color: #f0fff0; color: #2e8b57; } .theme-light-green h1, .theme-light-green h2 { color: #3cb371; } .theme-light-green form, .theme-light-green .tab-content { background-color: #f5fff5; border-color: #98fb98; } .theme-light-green .tab-container { border-color: #90ee90; } .theme-light-green .tab-buttons { background-color: #e0ffe0; border-bottom-color: #90ee90; } .theme-light-green .tab-buttons button { color: #2e8b57; border-right-color: #b0f0b0; } .theme-light-green .tab-buttons button:hover { background-color: #c0f0c0; } .theme-light-green .tab-buttons button.active { background-color: #98fb98; } .theme-light-green #caddyfile-output { background-color: #e6ffe6; border-color: #98fb98; color: #2e8b57; } .theme-light-green button { background-color: #8fbc8f; color: white; } .theme-light-green button:hover { background-color: #3cb371; } .theme-light-green input, .theme-light-green select, .theme-light-green textarea { border-color: #98fb98; background-color: #fff; color: #2e8b57; } .theme-light-green small { color: #3cb371; } .theme-light-green #sites-table th { background-color: #e0ffe0; } .theme-light-green #sites-table td, .theme-light-green #sites-table th { border-color: #b0f0b0; } .theme-light-green .modal-content { background-color: #f5fff5; border-color: #90ee90; }
+.theme-light-violet { background-color: #f8f0ff; color: #8a2be2; } .theme-light-violet h1, .theme-light-violet h2 { color: #9370db; } .theme-light-violet form, .theme-light-violet .tab-content { background-color: #fbf5ff; border-color: #e6e6fa; } .theme-light-violet .tab-container { border-color: #d8bfd8; } .theme-light-violet .tab-buttons { background-color: #f0e8ff; border-bottom-color: #d8bfd8; } .theme-light-violet .tab-buttons button { color: #8a2be2; border-right-color: #e0d0f0; } .theme-light-violet .tab-buttons button:hover { background-color: #e6e6fa; } .theme-light-violet .tab-buttons button.active { background-color: #d8bfd8; } .theme-light-violet #caddyfile-output { background-color: #f5f0fa; border-color: #e6e6fa; color: #8a2be2; } .theme-light-violet button { background-color: #ba55d3; color: white; } .theme-light-violet button:hover { background-color: #9932cc; } .theme-light-violet input, .theme-light-violet select, .theme-light-violet textarea { border-color: #d8bfd8; background-color: #fff; color: #8a2be2; } .theme-light-violet small { color: #9370db; } .theme-light-violet #sites-table th { background-color: #f0e8ff; } .theme-light-violet #sites-table td, .theme-light-violet #sites-table th { border-color: #e0d0f0; } .theme-light-violet .modal-content { background-color: #fbf5ff; border-color: #d8bfd8; }
+.theme-light-orange { background-color: #fff8f0; color: #d2691e; } .theme-light-orange h1, .theme-light-orange h2 { color: #ff7f50; } .theme-light-orange form, .theme-light-orange .tab-content { background-color: #fffaf5; border-color: #ffdab9; } .theme-light-orange .tab-container { border-color: #ffa07a; } .theme-light-orange .tab-buttons { background-color: #fff0e5; border-bottom-color: #ffa07a; } .theme-light-orange .tab-buttons button { color: #d2691e; border-right-color: #ffead0; } .theme-light-orange .tab-buttons button:hover { background-color: #ffdab9; } .theme-light-orange .tab-buttons button.active { background-color: #ffa07a; } .theme-light-orange #caddyfile-output { background-color: #fff5ec; border-color: #ffdab9; color: #d2691e; } .theme-light-orange button { background-color: #ff8c69; color: white; } .theme-light-orange button:hover { background-color: #ff7f50; } .theme-light-orange input, .theme-light-orange select, .theme-light-orange textarea { border-color: #ffa07a; background-color: #fff; color: #d2691e; } .theme-light-orange small { color: #ff7f50; } .theme-light-orange #sites-table th { background-color: #fff0e5; } .theme-light-orange #sites-table td, .theme-light-orange #sites-table th { border-color: #ffead0; } .theme-light-orange .modal-content { background-color: #fffaf5; border-color: #ffa07a; }
+.theme-light-gray { background-color: #f8f9fa; color: #5a6268; } .theme-light-gray h1, .theme-light-gray h2 { color: #6c757d; } .theme-light-gray form, .theme-light-gray .tab-content { background-color: #ffffff; border-color: #e9ecef; } .theme-light-gray .tab-container { border-color: #dee2e6; } .theme-light-gray .tab-buttons { background-color: #f1f3f5; border-bottom-color: #dee2e6; } .theme-light-gray .tab-buttons button { color: #495057; border-right-color: #e9ecef; } .theme-light-gray .tab-buttons button:hover { background-color: #e9ecef; } .theme-light-gray .tab-buttons button.active { background-color: #dee2e6; } .theme-light-gray #caddyfile-output { background-color: #f1f3f5; border-color: #e9ecef; color: #495057; } .theme-light-gray button { background-color: #adb5bd; color: #212529; } .theme-light-gray button:hover { background-color: #868e96; } .theme-light-gray input, .theme-light-gray select, .theme-light-gray textarea { border-color: #ced4da; background-color: #fff; color: #495057; } .theme-light-gray small { color: #6c757d; } .theme-light-gray #sites-table th { background-color: #f1f3f5; } .theme-light-gray #sites-table td, .theme-light-gray #sites-table th { border-color: #e9ecef; } .theme-light-gray .modal-content { background-color: #ffffff; border-color: #dee2e6; }
+/* --- Dark Themes (Darker/Subdued) --- */
+.theme-dark-blue { background-color: #0b132b; color: #a8dadc; } .theme-dark-blue h1, .theme-dark-blue h2 { color: #457b9d; } .theme-dark-blue form, .theme-dark-blue .tab-content { background-color: #1d3557; border-color: #2a4b7c; } .theme-dark-blue .tab-container { border-color: #457b9d; } .theme-dark-blue .tab-buttons { background-color: #1f4068; border-bottom-color: #457b9d; } .theme-dark-blue .tab-buttons button { color: #a8dadc; border-right-color: #2a4b7c; } .theme-dark-blue .tab-buttons button:hover { background-color: #2a4b7c; } .theme-dark-blue .tab-buttons button.active { background-color: #457b9d; } .theme-dark-blue #caddyfile-output { background-color: #1f4068; border-color: #457b9d; color: #f1faee; } .theme-dark-blue button { background-color: #457b9d; color: #f1faee; } .theme-dark-blue button:hover { background-color: #1d3557; } .theme-dark-blue input, .theme-dark-blue select, .theme-dark-blue textarea { border-color: #457b9d; background-color: #1f4068; color: #a8dadc; } .theme-dark-blue small { color: #a8dadc; } .theme-dark-blue #sites-table th { background-color: #1f4068; } .theme-dark-blue #sites-table td, .theme-dark-blue #sites-table th { border-color: #2a4b7c; } .theme-dark-blue .modal-content { background-color: #1d3557; border-color: #457b9d; }
+.theme-dark-green { background-color: #18281a; color: #b8d8be; } .theme-dark-green h1, .theme-dark-green h2 { color: #52796f; } .theme-dark-green form, .theme-dark-green .tab-content { background-color: #2f4f39; border-color: #3a6b48; } .theme-dark-green .tab-container { border-color: #52796f; } .theme-dark-green .tab-buttons { background-color: #355e49; border-bottom-color: #52796f; } .theme-dark-green .tab-buttons button { color: #b8d8be; border-right-color: #3a6b48; } .theme-dark-green .tab-buttons button:hover { background-color: #3a6b48; } .theme-dark-green .tab-buttons button.active { background-color: #52796f; } .theme-dark-green #caddyfile-output { background-color: #355e49; border-color: #52796f; color: #cad2c5; } .theme-dark-green button { background-color: #52796f; color: #ffffff; } .theme-dark-green button:hover { background-color: #2f4f39; } .theme-dark-green input, .theme-dark-green select, .theme-dark-green textarea { border-color: #52796f; background-color: #355e49; color: #b8d8be; } .theme-dark-green small { color: #b8d8be; } .theme-dark-green #sites-table th { background-color: #355e49; } .theme-dark-green #sites-table td, .theme-dark-green #sites-table th { border-color: #3a6b48; } .theme-dark-green .modal-content { background-color: #2f4f39; border-color: #52796f; }
+.theme-dark-violet { background-color: #1c132a; color: #e0c3fc; } .theme-dark-violet h1, .theme-dark-violet h2 { color: #9d4edd; } .theme-dark-violet form, .theme-dark-violet .tab-content { background-color: #3c096c; border-color: #5a189a; } .theme-dark-violet .tab-container { border-color: #7b2cbf; } .theme-dark-violet .tab-buttons { background-color: #5a189a; border-bottom-color: #7b2cbf; } .theme-dark-violet .tab-buttons button { color: #e0c3fc; border-right-color: #5a189a; } .theme-dark-violet .tab-buttons button:hover { background-color: #5a189a; } .theme-dark-violet .tab-buttons button.active { background-color: #7b2cbf; } .theme-dark-violet #caddyfile-output { background-color: #5a189a; border-color: #7b2cbf; color: #f4e8ff; } .theme-dark-violet button { background-color: #7b2cbf; color: #f4e8ff; } .theme-dark-violet button:hover { background-color: #3c096c; } .theme-dark-violet input, .theme-dark-violet select, .theme-dark-violet textarea { border-color: #7b2cbf; background-color: #5a189a; color: #e0c3fc; } .theme-dark-violet small { color: #e0c3fc; } .theme-dark-violet #sites-table th { background-color: #5a189a; } .theme-dark-violet #sites-table td, .theme-dark-violet #sites-table th { border-color: #5a189a; } .theme-dark-violet .modal-content { background-color: #3c096c; border-color: #7b2cbf; }
+.theme-dark-orange { background-color: #331a00; color: #ffddb3; } .theme-dark-orange h1, .theme-dark-orange h2 { color: #e85d04; } .theme-dark-orange form, .theme-dark-orange .tab-content { background-color: #663300; border-color: #994d00; } .theme-dark-orange .tab-container { border-color: #cc6600; } .theme-dark-orange .tab-buttons { background-color: #804000; border-bottom-color: #cc6600; } .theme-dark-orange .tab-buttons button { color: #ffddb3; border-right-color: #994d00; } .theme-dark-orange .tab-buttons button:hover { background-color: #994d00; } .theme-dark-orange .tab-buttons button.active { background-color: #cc6600; } .theme-dark-orange #caddyfile-output { background-color: #804000; border-color: #cc6600; color: #fff0e0; } .theme-dark-orange button { background-color: #cc6600; color: #fff0e0; } .theme-dark-orange button:hover { background-color: #663300; } .theme-dark-orange input, .theme-dark-orange select, .theme-dark-orange textarea { border-color: #cc6600; background-color: #804000; color: #ffddb3; } .theme-dark-orange small { color: #ffddb3; } .theme-dark-orange #sites-table th { background-color: #804000; } .theme-dark-orange #sites-table td, .theme-dark-orange #sites-table th { border-color: #994d00; } .theme-dark-orange .modal-content { background-color: #663300; border-color: #cc6600; }
+.theme-dark-gray { background-color: #1a1a1a; color: #cccccc; } .theme-dark-gray h1, .theme-dark-gray h2 { color: #999999; } .theme-dark-gray form, .theme-dark-gray .tab-content { background-color: #2b2b2b; border-color: #444444; } .theme-dark-gray .tab-container { border-color: #555555; } .theme-dark-gray .tab-buttons { background-color: #3c3c3c; border-bottom-color: #555555; } .theme-dark-gray .tab-buttons button { color: #cccccc; border-right-color: #444444; } .theme-dark-gray .tab-buttons button:hover { background-color: #444444; } .theme-dark-gray .tab-buttons button.active { background-color: #555555; } .theme-dark-gray #caddyfile-output { background-color: #3c3c3c; border-color: #555555; color: #e0e0e0; } .theme-dark-gray button { background-color: #555555; color: #e0e0e0; } .theme-dark-gray button:hover { background-color: #2b2b2b; } .theme-dark-gray input, .theme-dark-gray select, .theme-dark-gray textarea { border-color: #555555; background-color: #3c3c3c; color: #cccccc; } .theme-dark-gray small { color: #cccccc; } .theme-dark-gray #sites-table th { background-color: #3c3c3c; } .theme-dark-gray #sites-table td, .theme-dark-gray #sites-table th { border-color: #444444; } .theme-dark-gray .modal-content { background-color: #2b2b2b; border-color: #555555; }
+
+/* --- Raw Caddyfile Tab --- */
+#raw-caddyfile-tab textarea { width: 98%; min-height: 400px; font-family: monospace; white-space: pre; border: 1px solid #ccc; background-color: #fdfdfd; color: #333; padding: 10px; border-radius: 4px; }
+#raw-caddyfile-tab button { margin-top: 10px; }
+/* #parse-message { font-style: italic; } */ /* Remplacé par toasts */
+/* Theme adjustments for raw text area */
+.theme-light-blue #raw-caddyfile-tab textarea { border-color: #99c8ff; background-color: #f8fcff; color: #003366; } .theme-light-green #raw-caddyfile-tab textarea { border-color: #99ffc2; background-color: #f5fff5; color: #004d1a; } .theme-light-violet #raw-caddyfile-tab textarea { border-color: #c099ff; background-color: #fbf5ff; color: #4b0082; } .theme-light-orange #raw-caddyfile-tab textarea { border-color: #ffc280; background-color: #fffaf5; color: #663300; } .theme-light-gray #raw-caddyfile-tab textarea { border-color: #dee2e6; background-color: #ffffff; color: #495057; }
+.theme-dark-blue #raw-caddyfile-tab textarea { border-color: #457b9d; background-color: #1f4068; color: #f1faee; } .theme-dark-green #raw-caddyfile-tab textarea { border-color: #52796f; background-color: #355e49; color: #cad2c5; } .theme-dark-violet #raw-caddyfile-tab textarea { border-color: #7b2cbf; background-color: #5a189a; color: #f4e8ff; } .theme-dark-orange #raw-caddyfile-tab textarea { border-color: #cc6600; background-color: #804000; color: #fff0e0; } .theme-dark-gray #raw-caddyfile-tab textarea { border-color: #555555; background-color: #3c3c3c; color: #e0e0e0; }
+
+
+/* --- Configurator Table Styles --- */
+#sites-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.95em; }
+#sites-table th, #sites-table td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: middle; }
+#sites-table th { background-color: #f2f2f2; font-weight: bold; }
+#sites-table td.actions { text-align: right; white-space: nowrap; }
+#sites-table .action-btn { padding: 3px 6px; font-size: 0.85em; margin: 1px; /* Espace entre les boutons d'action */ }
+#sites-table td input[type="checkbox"] { vertical-align: middle; margin: 0; /* Centrer la checkbox */ }
+#sites-table td a { color: inherit; text-decoration: none; }
+#sites-table td a:hover { text-decoration: underline; color: #0056b3; }
+
+/* Centrage pour les colonnes de checkbox */
+#sites-table th:nth-child(4), /* Skip TLS Verify header */
+#sites-table th:nth-child(5)  /* Authentik header */
+{
+    text-align: center;
+}
+
+
+/* Theme adjustments for table */
+.theme-light-blue #sites-table td, .theme-light-blue #sites-table th { border-color: #c0d4e8; } .theme-light-blue #sites-table th { background-color: #e0f0ff; } .theme-light-blue #sites-table td a:hover { color: #4169e1; }
+.theme-light-green #sites-table td, .theme-light-green #sites-table th { border-color: #b0f0b0; } .theme-light-green #sites-table th { background-color: #e0ffe0; } .theme-light-green #sites-table td a:hover { color: #3cb371; }
+.theme-light-violet #sites-table td, .theme-light-violet #sites-table th { border-color: #e0d0f0; } .theme-light-violet #sites-table th { background-color: #f0e8ff; } .theme-light-violet #sites-table td a:hover { color: #9932cc; }
+.theme-light-orange #sites-table td, .theme-light-orange #sites-table th { border-color: #ffead0; } .theme-light-orange #sites-table th { background-color: #fff0e5; } .theme-light-orange #sites-table td a:hover { color: #ff7f50; }
+.theme-light-gray #sites-table td, .theme-light-gray #sites-table th { border-color: #e9ecef; } .theme-light-gray #sites-table th { background-color: #f1f3f5; } .theme-light-gray #sites-table td a:hover { color: #0056b3; }
+.theme-dark-blue #sites-table td, .theme-dark-blue #sites-table th { border-color: #2a4b7c; } .theme-dark-blue #sites-table th { background-color: #1f4068; } .theme-dark-blue #sites-table td a:hover { color: #69c0ff; }
+.theme-dark-green #sites-table td, .theme-dark-green #sites-table th { border-color: #3a6b48; } .theme-dark-green #sites-table th { background-color: #355e49; } .theme-dark-green #sites-table td a:hover { color: #8fbc8f; }
+.theme-dark-violet #sites-table td, .theme-dark-violet #sites-table th { border-color: #5a189a; } .theme-dark-violet #sites-table th { background-color: #5a189a; } .theme-dark-violet #sites-table td a:hover { color: #c390f0; }
+.theme-dark-orange #sites-table td, .theme-dark-orange #sites-table th { border-color: #994d00; } .theme-dark-orange #sites-table th { background-color: #804000; } .theme-dark-orange #sites-table td a:hover { color: #ffb766; }
+.theme-dark-gray #sites-table td, .theme-dark-gray #sites-table th { border-color: #444444; } .theme-dark-gray #sites-table th { background-color: #3c3c3c; } .theme-dark-gray #sites-table td a:hover { color: #bbb; }
+
+
+/* --- Modal Styles --- */
+.modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+.modal-content { background-color: #fefefe; margin: 5% auto; padding: 25px; border: 1px solid #888; border-radius: 8px; width: 80%; max-width: 700px; position: relative; }
+.close-modal-btn { color: #aaa; position: absolute; top: 10px; right: 20px; font-size: 28px; font-weight: bold; line-height: 1; }
+.close-modal-btn:hover, .close-modal-btn:focus { color: black; text-decoration: none; cursor: pointer; }
+.modal-content h2 { margin-top: 0; }
+.modal-content h3 { font-size: 1.2em; margin-top: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+.modal-content h4 { font-size: 1em; margin-top: 1em; margin-bottom: 0.5em; }
+.modal-content .options-section { padding: 10px; margin-top: 5px; border: 1px solid #eee; border-radius: 4px; background-color: #f9f9f9; }
+.modal-content .modal-toggle-link { text-decoration: none; color: inherit; font-weight: bold; cursor: pointer; }
+.modal-content .modal-toggle-link:hover { text-decoration: underline; }
+.modal-actions { margin-top: 20px; text-align: right; }
+.modal-actions button { margin-left: 10px; }
+#modal-cancel-btn { background-color: #6c757d; }
+#modal-cancel-btn:hover { background-color: #5a6268; }
+.modal-toggle-buttons { margin-top: 15px; margin-bottom: 10px; padding-top: 10px; border-top: 1px dashed #eee; }
+.modal-toggle-btn { margin-right: 5px; margin-bottom: 5px; font-size: 0.85em; padding: 3px 8px; background-color: #6c757d; color: white; border: 1px solid #5a6268; }
+.modal-toggle-btn:hover { opacity: 0.9; }
+/* Theme adjustments for modal */
+.theme-light-blue .modal-content { background-color: #f8fcff; border-color: #add8e6; } .theme-light-blue .modal-content .options-section { background-color: #f0faff; border-color: #cce7ff; } .theme-light-blue .modal-content h3, .theme-light-blue .modal-content .options-section h4, .theme-light-blue .modal-toggle-buttons { border-color: #cce7ff; } .theme-light-blue .close-modal-btn:hover { color: #003366; } .theme-light-blue .modal-toggle-btn { background-color: #6495ed; border-color: #4169e1; }
+.theme-light-green .modal-content { background-color: #f5fff5; border-color: #90ee90; } .theme-light-green .modal-content .options-section { background-color: #f0fff5; border-color: #ccffe0; } .theme-light-green .modal-content h3, .theme-light-green .modal-content .options-section h4, .theme-light-green .modal-toggle-buttons { border-color: #ccffe0; } .theme-light-green .close-modal-btn:hover { color: #004d1a; } .theme-light-green .modal-toggle-btn { background-color: #8fbc8f; border-color: #3cb371; }
+.theme-light-violet .modal-content { background-color: #fbf5ff; border-color: #d8bfd8; } .theme-light-violet .modal-content .options-section { background-color: #f8f0ff; border-color: #e0ccff; } .theme-light-violet .modal-content h3, .theme-light-violet .modal-content .options-section h4, .theme-light-violet .modal-toggle-buttons { border-color: #e0ccff; } .theme-light-violet .close-modal-btn:hover { color: #4b0082; } .theme-light-violet .modal-toggle-btn { background-color: #ba55d3; border-color: #9932cc; }
+.theme-light-orange .modal-content { background-color: #fffaf5; border-color: #ffa07a; } .theme-light-orange .modal-content .options-section { background-color: #fff8f0; border-color: #ffe0b3; } .theme-light-orange .modal-content h3, .theme-light-orange .modal-content .options-section h4, .theme-light-orange .modal-toggle-buttons { border-color: #ffe0b3; } .theme-light-orange .close-modal-btn:hover { color: #663300; } .theme-light-orange .modal-toggle-btn { background-color: #ff8c69; border-color: #ff7f50; }
+.theme-light-gray .modal-content { background-color: #ffffff; border-color: #dee2e6; } .theme-light-gray .modal-content .options-section { background-color: #f8f9fa; border-color: #e9ecef; } .theme-light-gray .modal-content h3, .theme-light-gray .modal-content .options-section h4, .theme-light-gray .modal-toggle-buttons { border-color: #e9ecef; } .theme-light-gray .close-modal-btn:hover { color: #343a40; } .theme-light-gray .modal-toggle-btn { background-color: #adb5bd; border-color: #868e96; color: #212529; }
+.theme-dark-blue .modal-content { background-color: #1d3557; border-color: #457b9d; } .theme-dark-blue .modal-content .options-section { background-color: #1f4068; border-color: #2a4b7c; } .theme-dark-blue .modal-content h3, .theme-dark-blue .modal-content .options-section h4, .theme-dark-blue .modal-toggle-buttons { border-color: #2a4b7c; } .theme-dark-blue .close-modal-btn { color: #a8dadc; } .theme-dark-blue .close-modal-btn:hover { color: #f1faee; } .theme-dark-blue .modal-toggle-btn { background-color: #457b9d; border-color: #1d3557; color: #f1faee; }
+.theme-dark-green .modal-content { background-color: #2f4f39; border-color: #52796f; } .theme-dark-green .modal-content .options-section { background-color: #355e49; border-color: #3a6b48; } .theme-dark-green .modal-content h3, .theme-dark-green .modal-content .options-section h4, .theme-dark-green .modal-toggle-buttons { border-color: #3a6b48; } .theme-dark-green .close-modal-btn { color: #b8d8be; } .theme-dark-green .close-modal-btn:hover { color: #cad2c5; } .theme-dark-green .modal-toggle-btn { background-color: #52796f; border-color: #2f4f39; color: #ffffff; }
+.theme-dark-violet .modal-content { background-color: #3c096c; border-color: #7b2cbf; } .theme-dark-violet .modal-content .options-section { background-color: #5a189a; border-color: #5a189a; } .theme-dark-violet .modal-content h3, .theme-dark-violet .modal-content .options-section h4, .theme-dark-violet .modal-toggle-buttons { border-color: #5a189a; } .theme-dark-violet .close-modal-btn { color: #e0c3fc; } .theme-dark-violet .close-modal-btn:hover { color: #f4e8ff; } .theme-dark-violet .modal-toggle-btn { background-color: #7b2cbf; border-color: #3c096c; color: #f4e8ff; }
+.theme-dark-orange .modal-content { background-color: #663300; border-color: #cc6600; } .theme-dark-orange .modal-content .options-section { background-color: #804000; border-color: #994d00; } .theme-dark-orange .modal-content h3, .theme-dark-orange .modal-content .options-section h4, .theme-dark-orange .modal-toggle-buttons { border-color: #994d00; } .theme-dark-orange .close-modal-btn { color: #ffddb3; } .theme-dark-orange .close-modal-btn:hover { color: #fff0e0; } .theme-dark-orange .modal-toggle-btn { background-color: #cc6600; border-color: #663300; color: #fff0e0; }
+.theme-dark-gray .modal-content { background-color: #2b2b2b; border-color: #555555; } .theme-dark-gray .modal-content .options-section { background-color: #3c3c3c; border-color: #444444; } .theme-dark-gray .modal-content h3, .theme-dark-gray .modal-content .options-section h4, .theme-dark-gray .modal-toggle-buttons { border-color: #444444; } .theme-dark-gray .close-modal-btn { color: #cccccc; } .theme-dark-gray .close-modal-btn:hover { color: #e0e0e0; } .theme-dark-gray .modal-toggle-btn { background-color: #555555; border-color: #2b2b2b; color: #e0e0e0; }
+
+
+/* --- File Browser Styles (Si vous le réactivez un jour) --- */
+/* #file-browser { ... } */
+/* ... (autres styles du file browser si nécessaire) ... */
+
+/* --- Styles pour les Toasts --- */
+#toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.toast {
+    background-color: #333;
+    color: white;
+    padding: 12px 20px;
+    margin-bottom: 10px;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    opacity: 0;
+    transform: translateX(100%);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-width: 250px;
+    max-width: 400px;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.toast.success { background-color: #28a745; }
+.toast.danger, .toast.error { background-color: #dc3545; } /* error est un alias pour danger */
+.toast.warning { background-color: #ffc107; color: #333; }
+.toast.info { background-color: #17a2b8; }
+
+.toast .toast-message {
+    flex-grow: 1;
+}
+
+.toast .toast-close-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.2em;
+    margin-left: 15px;
+    cursor: pointer;
+    padding: 0 5px;
+    line-height: 1;
+}
+.toast.warning .toast-close-btn { color: #333; }
+
+/* Styles pour les messages flash de Flask (conservés si utilisés ailleurs, sinon peuvent être supprimés) */
+.flash-message {
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    font-weight: bold;
+}
+.flash-message.success { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
+.flash-message.danger { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+.flash-message.warning { background-color: #fff3cd; color: #856404; border-color: #ffeeba; }
+.flash-message.info { background-color: #d1ecf1; color: #0c5460; border-color: #bee5eb; }

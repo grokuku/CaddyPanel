@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CaddyPanel - Caddy 2 Control Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script id="initial-data" type="application/json">
+        {{ {"initial_caddyfile_content": initial_caddyfile_content}|tojson|safe }}
+    </script>
+    <!-- Style pour cacher les messages flash initiaux s'ils sont transformés en toasts -->
+    <style>
+        ul.flash-messages-to-toast { display: none; }
+    </style>
+</head>
+<body class="theme-light-gray"> <!-- Default theme -->
+    <div style="text-align: right; margin-bottom: 10px;">
+        Logged in as: <strong>{{ username }}</strong> | 
+        <a href="{{ url_for('stats_page') }}">Global Stats</a> | 
+        <a href="{{ url_for('logout') }}">Logout</a>
+    </div>
+    <h1>CaddyPanel</h1>
+    <p style="text-align:center; margin-top:-10px; margin-bottom:20px; color:#555;">The Caddy 2 Reverse Proxy Control Panel</p>
+
+     {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flash-messages-to-toast" style="list-style: none; padding: 0; margin-bottom: 15px;">
+        {% for category, message in messages %}
+          <li data-category="{{ category }}" data-message="{{ message }}"></li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    <div id="toast-container"></div> <!-- Conteneur pour les toasts -->
+
+    <div class="tab-container">
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="openTab(event, 'configurator-tab')">Configurator</button>
+            <button class="tab-button" onclick="openTab(event, 'raw-caddyfile-tab')">Raw Caddyfile</button>
+            <button class="tab-button" onclick="openTab(event, 'preferences-tab')">Preferences</button>
+        </div>
+
+        <!-- Configurator Tab Content -->
+        <div id="configurator-tab" class="tab-content" style="display: block;">
+            <h2>Site Configurations</h2>
+            <p>Modifications are automatically saved and Caddy is reloaded.</p>
+            <button type="button" id="add-host-btn" class="add-remove-btn" style="margin-bottom: 15px;">Add Proxy Host</button>
+            <table id="sites-table">
+                <thead>
+                    <tr>
+                        <th>Hostname</th>
+                        <th>Forward To</th>
+                        <th>SSL</th>
+                        <th>Skip TLS Verify</th>
+                        <th>Authentik</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="sites-table-body">
+                    <tr><td colspan="6">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+         <!-- Raw Caddyfile Tab Content -->
+        <div id="raw-caddyfile-tab" class="tab-content" style="display: none;">
+             <h2>Raw Caddyfile</h2>
+             <p>View the generated Caddyfile below. You can edit it directly and then parse it back into the Configurator tab.
+                Changes parsed from here will also be automatically saved and reloaded.
+             </p>
+             <div class="form-group">
+                 <textarea id="caddyfile-output" rows="20" style="width: 98%; font-family: monospace; white-space: pre;"></textarea>
+             </div>
+             <button type="button" id="parse-raw-btn">Parse Raw Text & Update Configurator</button>
+             <hr style="margin: 20px 0;">
+             <h3>Import / Export</h3>
+             <div class="form-group">
+                 <button type="button" id="export-caddyfile-btn">Export Caddyfile</button>
+                 <input type="file" id="import-caddyfile-input" accept=".caddyfile,.txt,text/plain" style="display: none;">
+                 <button type="button" id="import-caddyfile-btn" style="margin-left: 10px;">Import Caddyfile</button>
+             </div>
+        </div>
+
+
+        <!-- Preferences Tab Content -->
+        <div id="preferences-tab" class="tab-content" style="display: none;">
+            <h2>Preferences</h2>
+             <form id="prefs-form">
+                <h3>Appearance</h3>
+                <div class="form-group">
+                    <label for="theme-select">Theme:</label>
+                    <select id="theme-select" name="theme-select">
+                        <optgroup label="Light Themes"> <option value="theme-light-blue">Blue (Light)</option> <option value="theme-light-green">Green (Light)</option> <option value="theme-light-violet">Violet (Light)</option> <option value="theme-light-orange">Orange (Light)</option> <option value="theme-light-gray" selected>Gray (Light)</option> </optgroup>
+                        <optgroup label="Dark Themes"> <option value="theme-dark-blue">Blue (Dark)</option> <option value="theme-dark-green">Green (Dark)</option> <option value="theme-dark-violet">Violet (Dark)</option> <option value="theme-dark-orange">Orange (Dark)</option> <option value="theme-dark-gray">Gray (Dark)</option> </optgroup>
+                    </select>
+                </div>
+                <hr>
+                <h3>Global Caddyfile Settings</h3>
+                 <div class="form-group"> <label for="global-admin-email">Global Admin Email (for ACME):</label> <input type="email" id="global-admin-email" name="globalAdminEmail"> </div>
+                 <hr>
+                 <h3>Default Values for New Sites</h3>
+                 <div class="form-group form-group-inline"> <input type="checkbox" id="default-skip-tls-verify" name="defaultSkipTlsVerify"> <label for="default-skip-tls-verify">Default 'Skip TLS Verify' to ON for new HTTPS reverse proxies</label> </div>
+                 <h4>Default Authentik Settings</h4>
+                 <div class="form-group form-group-inline"> <input type="checkbox" id="default-authentik-enabled" name="defaultAuthentikEnabled"> <label for="default-authentik-enabled">Default 'Enable Authentik' to ON for new sites</label> </div>
+                 <div class="form-group"> <label for="default-authentik-outpost-url">Default Outpost URL:</label> <input type="text" id="default-authentik-outpost-url" name="defaultAuthentikOutpostUrl"> </div>
+                 <div class="form-group"> <label for="default-authentik-uri">Default Auth URI:</label> <input type="text" id="default-authentik-uri" name="defaultAuthentikUri"> </div>
+                 <div class="form-group"> <label for="default-authentik-copy-headers">Default Headers to Copy:</label> <input type="text" id="default-authentik-copy-headers" name="defaultAuthentikCopyHeaders"> </div>
+                 <div class="form-group"> <label for="default-authentik-trusted-proxies">Default Trusted Proxies:</label> <input type="text" id="default-authentik-trusted-proxies" name="defaultAuthentikTrustedProxies"> </div>
+                <hr>
+                 <button type="button" id="save-prefs-btn">Save Preferences</button>
+             </form>
+        </div>
+    </div>
+
+    <!-- Site Edit/Add Modal -->
+    <div id="site-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-modal-btn">×</span>
+            <h2 id="modal-title">Add Proxy Host</h2>
+            <form id="modal-form">
+                <input type="hidden" id="modal-site-index" value="-1">
+                 <h3>Site Configuration</h3>
+                 <div class="form-group">
+                     <label for="modal-server-address">Site Address:</label>
+                     <input type="text" id="modal-server-address" name="server-address" placeholder="example.com" required>
+                 </div>
+                 <div class="form-group">
+                     <label for="modal-reverse-proxy">Reverse Proxy To:</label>
+                     <input type="text" id="modal-reverse-proxy" name="reverse-proxy" placeholder="localhost:8080 or http://internal-app:port">
+                 </div>
+                  <div class="form-group form-group-inline">
+                      <input type="checkbox" id="modal-tls-skip-verify" name="tls-skip-verify">
+                      <label for="modal-tls-skip-verify">Skip TLS Verify (for https reverse proxy target)</label>
+                 </div>
+
+                 <div class="modal-toggle-buttons">
+                    <button type="button" class="modal-toggle-btn" data-section="modal-root-fs-options">Root/File Server</button>
+                    <button type="button" class="modal-toggle-btn" data-section="modal-tls-options">TLS</button>
+                    <button type="button" class="modal-toggle-btn" data-section="modal-log-options">Logging</button>
+                    <button type="button" class="modal-toggle-btn" data-section="modal-authentik-options-group">Authentik</button>
+                 </div>
+
+                 <div class="options-section modal-root-fs-options" style="display: none;">
+                    <h4>Root & File Server</h4>
+                     <div class="form-group"> <label for="modal-root-dir">Root Directory:</label> <input type="text" id="modal-root-dir" name="root-dir" placeholder="/srv/my-static-site"> </div>
+                     <div class="form-group form-group-inline"> <input type="checkbox" id="modal-file-server" name="file-server"> <label for="modal-file-server">Enable File Server</label> </div>
+                 </div>
+
+                 <div class="options-section modal-tls-options" style="display: none;">
+                    <h4>TLS Configuration</h4>
+                     <div class="form-group">
+                        <label for="modal-tls-mode">TLS Mode for this Site:</label>
+                        <select id="modal-tls-mode" name="tls-mode">
+                            <option value="auto">Automatic HTTPS (Let's Encrypt or ZeroSSL)</option>
+                            <option value="internal">Internal (Self-Signed Certificate)</option>
+                            <!-- <option value="off">Off (HTTP only)</option> --> 
+                        </select>
+                        <small>Note: 'Skip TLS Verify' checkbox above applies to `reverse_proxy` targets, not this site's TLS.</small>
+                     </div>
+                 </div>
+
+                 <div class="options-section modal-log-options" style="display: none;">
+                    <h4>Logging</h4>
+                     <div class="form-group"> <label for="modal-log-output">Log Output (site specific):</label> <input type="text" id="modal-log-output" name="log-output" placeholder="stderr or /path/to/site.log"> </div>
+                 </div>
+
+                 <div class="options-section modal-authentik-options-group" style="display: none;">
+                    <h4>Authentik Integration</h4>
+                     <div class="form-group form-group-inline"> <input type="checkbox" id="modal-authentik-enable" name="authentik-enable"> <label for="modal-authentik-enable">Enable Authentik</label> </div>
+                     <div class="form-group modal-authentik-options" style="display: none;"> <label for="modal-authentik-outpost-url">Outpost URL:</label> <input type="text" id="modal-authentik-outpost-url" name="authentik-outpost-url"> </div>
+                     <div class="form-group modal-authentik-options" style="display: none;"> <label for="modal-authentik-uri">Auth URI:</label> <input type="text" id="modal-authentik-uri" name="authentik-uri"> </div>
+                     <div class="form-group modal-authentik-options" style="display: none;"> <label for="modal-authentik-copy-headers">Headers to Copy:</label> <input type="text" id="modal-authentik-copy-headers" name="authentik-copy-headers"> </div>
+                     <div class="form-group modal-authentik-options" style="display: none;"> <label for="modal-authentik-trusted-proxies">Trusted Proxies:</label> <input type="text" id="modal-authentik-trusted-proxies" name="authentik-trusted-proxies"> </div>
+                 </div>
+
+                 <div class="modal-actions">
+                    <button type="button" id="modal-save-btn">Save Changes</button>
+                    <button type="button" id="modal-cancel-btn">Cancel</button>
+                 </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
+            tablinks = document.getElementsByClassName("tab-button");
+            for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
+            const targetTab = document.getElementById(tabName);
+            if (targetTab) { targetTab.style.display = "block"; }
+            if (evt && evt.currentTarget) { evt.currentTarget.className += " active"; }
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            const firstTabButton = document.querySelector('.tab-buttons .tab-button');
+            if (firstTabButton && !document.querySelector('.tab-buttons .tab-button.active')) {
+                const configuratorTab = document.getElementById('configurator-tab');
+                if (configuratorTab && firstTabButton.innerText.trim().toLowerCase() === 'configurator') { 
+                    configuratorTab.style.display = 'block';
+                    firstTabButton.classList.add('active');
+                }
+            }
+
+            const flashMessagesList = document.querySelector('ul.flash-messages-to-toast');
+            if (flashMessagesList && typeof showToast === 'function') { 
+                const messages = flashMessagesList.querySelectorAll('li');
+                messages.forEach(li => {
+                    const category = li.dataset.category || 'info';
+                    const message = li.dataset.message;
+                    if (message) {
+                        const toastType = category === 'danger' ? 'error' : category;
+                        showToast(message, toastType, toastType === 'error' ? 8000 : 5000);
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

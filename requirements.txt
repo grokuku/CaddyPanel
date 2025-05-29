@@ -1,0 +1,8 @@
+# History:
+# 2025-04-09: Cline - Initial cleanup. Reduced the list to core Flask app dependencies.
+#                     Original file contained many unrelated packages and local file paths,
+#                     likely from a specific Conda environment export.
+#                     Keeping only Flask and Werkzeug for clarity and reproducibility.
+
+Flask>=3.0.0,<4.0.0
+Werkzeug>=3.0.0,<4.0.0
