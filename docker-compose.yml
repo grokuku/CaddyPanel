@@ -8,8 +8,8 @@ services:
     image: caddypanel:latest # Image name changed
     container_name: caddypanel-instance # Container name changed
     ports:
-      - "81:80"
-      - "444:443"
+      - "80:80"
+      - "443:443"
       - "5000:5000" # Port Flask (configurable via FLASK_PORT dans le Dockerfile/supervisord)
       # - "2019:2019" # Décommentez pour exposer l'API admin de Caddy (non recommandé en prod sans sécurité)
     volumes:
