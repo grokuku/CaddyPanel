@@ -47,5 +47,5 @@ jobs:
         push: true
         # IMPORTANT: Remplacez par votre nom d'utilisateur Docker Hub
         tags: |
-          VOTRE_NOM_DOCKERHUB/caddypanel:latest
-          VOTRE_NOM_DOCKERHUB/caddypanel:${{ github.sha }}
+          holaflenain/caddypanel:latest
+          holaflenain/caddypanel:${{ github.sha }}
