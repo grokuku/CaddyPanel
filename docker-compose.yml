@@ -1,44 +1,52 @@
+# ==============================================================================
+#                Example docker-compose file for CaddyPanel
+#
+# How to use:
+# 1. Copy this content into a file named `docker-compose.yml`.
+# 2. Edit the environment variables below, especially FLASK_SECRET_KEY.
+# 3. Run `docker compose up -d` in the same directory.
+#
+# CaddyPanel will then be accessible at http://<your_server_ip>:5000 for initial setup.
+# Once Caddy is configured to manage a domain, you will access CaddyPanel through that domain.
+# ==============================================================================
+
 version: '3.8'
 
 services:
-  caddypanel: # Service name changed
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: caddypanel:latest # Image name changed
-    container_name: caddypanel-instance # Container name changed
+  caddypanel:
+    # Use the official image from Docker Hub.
+    image: holaflenain/caddypanel:latest
+    container_name: caddypanel
+    restart: unless-stopped
+
     ports:
+      # Standard ports for web traffic handled by Caddy.
       - "80:80"
       - "443:443"
-      - "5000:5000" # Port Flask (configurable via FLASK_PORT dans le Dockerfile/supervisord)
-      # - "2019:2019" # Décommentez pour exposer l'API admin de Caddy (non recommandé en prod sans sécurité)
+      # Port for the CaddyPanel web interface.
+      # You can comment this out after the initial setup if you only access
+      # the UI through a domain managed by Caddy.
+      - "5000:5000"
+
+    environment:
+      # --- EDIT BELOW ---
+      # Secret key to secure Flask sessions.
+      # !! VERY IMPORTANT !! Change this value to a long, random string.
+      # You can generate one with: openssl rand -hex 32
+      - FLASK_SECRET_KEY=replace-me-with-a-secure-key
+      
+      # Timezone for Caddy and application logs to be accurate.
+      # List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+      - TZ=Etc/UTC
+
     volumes:
-      # Assurez-vous que ces dossiers existent sur l'hôte ou Docker les créera avec les permissions root.
-      # L'entrypoint.sh dans le conteneur s'occupera des permissions internes pour appuser.
-      - ./caddy_config_on_host:/etc/caddy   # Pour le Caddyfile et les configurations spécifiques de Caddy
-      - ./caddy_data_on_host:/data/caddy     # Pour les certificats ACME et autres données persistantes de Caddy
-      - ./app_data_on_host:/app_data       # Pour preferences.json et users.json de Flask
-    
-    # Pour les variables d'environnement sensibles comme FLASK_SECRET_KEY,
-    # utilisez un fichier .env à la racine de votre projet (où se trouve ce docker-compose.yml).
-    # Ce fichier .env ne doit PAS être versionné (ajoutez-le à .gitignore).
-    # Exemple de contenu pour .env:
-    # FLASK_SECRET_KEY=votre_super_cle_secrete_tres_longue_et_aleatoire
-    # TZ=Europe/Paris
-    env_file:
-      - .env # Docker Compose cherchera un fichier nommé .env dans le même dossier
-    
-    # Vous pouvez toujours surcharger ou ajouter des variables d'environnement ici si nécessaire,
-    # mais celles du .env auront la priorité si elles y sont définies.
-    # Exemple: si TZ n'est pas dans .env, vous pouvez le mettre ici:
-    # environment:
-    #   - TZ=Europe/Paris # Déjà défini dans .env via env_file, donc redondant ici
-
-    restart: unless-stopped
-    
-    networks:
-      - dockernet
-
-networks:
-  dockernet:
-    external: true
+      # Volume for Caddy's configuration (Caddyfile).
+      # The leading './' means the 'caddy_config' folder will be created
+      # in the same directory as this docker-compose.yml file.
+      - ./caddy_config:/etc/caddy
+      
+      # Volume for Caddy's data (SSL certificates, etc.).
+      - ./caddy_data:/data
+      
+      # Volume for CaddyPanel's data (users, preferences).
+      - ./caddypanel_data:/app_data

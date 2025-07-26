@@ -1,7 +1,7 @@
 # --- Stage 1: Builder pour Caddy ---
 FROM python:3.10-slim-bullseye AS caddy_builder
 
-ARG CADDY_VERSION=2.8.4
+ARG CADDY_VERSION=2.10.0
 # TARGETARCH est fourni automatiquement par Docker Buildx (ex: amd64, arm64)
 ARG TARGETARCH
 
