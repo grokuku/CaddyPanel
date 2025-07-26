@@ -1,14 +1,10 @@
 # CaddyPanel
 
-[![Docker Publish CI](https://github.com/holaflenain/caddypanel/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/holaflenain/caddypanel/actions/workflows/docker-publish.yml)
-[!Docker Pulls](https://img.shields.io/docker/pulls/holaflenain/caddypanel)](https://hub.docker.com/r/holaflenain/caddypanel)
-!Docker Image Platforms](https://img.shields.io/docker/v/holaflenain/caddypanel?label=platforms&logo=docker)
-
 CaddyPanel is a simple, self-hosted web UI for managing a **Caddy v2** server. It is designed to run in a single, all-in-one Docker container, providing an easy way to configure reverse proxies and manage your Caddyfile without directly editing files on the command line.
 
 This project is ideal for users who want a straightforward graphical interface for their Caddy instance, especially in home-server or small project environments.
 
-% Fitures
+## Features
 
 - **All-in-one Docker Container**: Caddy and the Flask web UIe are managed by Supervisor within a single container.
 - **Easy-to-use UI**: Manage your Caddy configurations with a simple table-based interface or a raw Caddyfile editor.
