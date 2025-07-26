@@ -660,17 +660,20 @@ function parseCaddyfile(content) {
         
         if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
         
-        const rpLines = siteContent.split('\n'); 
-        let mainRpLine = rpLines.find(line => line.trim().startsWith('reverse_proxy') && !line.includes('/outpost.goauthentik.io/'));
-        if (mainRpLine) {
-            const rpMatch = mainRpLine.match(/^\s*reverse_proxy\s+([^\s{]+)([\s\S]*?)(?=\{|$)/m);
-            if (rpMatch) {
-                siteData.reverse_proxy = rpMatch[1].trim();
-                if (rpMatch[2] && /transport\s+http\s*\{([\s\S]*?tls_insecure_skip_verify[\s\S]*?)\}/m.test(rpMatch[2])) { 
-                    siteData.tls_skip_verify = true; 
-                }
+        // START OF BUG FIX
+        // Correctly parse reverse_proxy and its 'tls_insecure_skip_verify' option within a block.
+        const rpBlockRegex = /^\s*reverse_proxy\s+([^\s{]+)\s*(?:\{([\s\S]*?)\})?/m;
+        const rpMatch = siteContent.match(rpBlockRegex);
+
+        // Heuristic to avoid matching a forward_auth directive if it's written as a raw reverse_proxy.
+        if (rpMatch && !rpMatch[1].includes('/outpost.goauthentik.io/')) {
+            siteData.reverse_proxy = rpMatch[1].trim();
+            const blockContent = rpMatch[2] || ''; // Content within {}
+            if (blockContent.includes('tls_insecure_skip_verify')) {
+                siteData.tls_skip_verify = true;
             }
         }
+        // END OF BUG FIX
 
         const tlsMatch = siteContent.match(/^\s*tls\s+([^\s]+)/m);
         if (tlsMatch) siteData.tls = tlsMatch[1].trim();

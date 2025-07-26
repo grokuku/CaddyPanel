@@ -1,0 +1,95 @@
+# Contexte du Projet CaddyPanel (pour LLM)
+
+Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour humain. Transmettre toutes les infos clés, sans tokens gaspillés en mise en page.
+
+======================================================================
+1. RÈGLES OPÉRATIONNELLES
+======================================================================
+
+- Fichier Manquant: Le signaler, demander son contenu, ne jamais l'inventer.
+- Modification Fichier: Pour un patch simple, fournir une commande `sed` en une ligne. Si complexe ou risqué, fournir le contenu complet du fichier. Ne pas utiliser d'autres outils (`awk`, `patch`).
+- Flux de Travail: Proposer une modification, puis attendre l'accord explicite de l'utilisateur avant de continuer.
+- Périmètre: Ne modifier que ce qui est strictement nécessaire à la tâche demandée. Pas de zèle.
+- Vérification: Après chaque modification, suggérer des points de contrôle ou des tests simples.
+
+
+======================================================================
+2. ARBORESCENCE DU PROJET
+======================================================================
+
+📁 caddyfile/
+  📄 Caddyfile
+📁 docker/
+  📄 entrypoint.sh
+  📄 supervisord.conf
+📁 static/
+  📄 script.js
+  📄 style.css
+📁 templates/
+  📄 index.html
+  📄 login.html
+  📄 setup.html
+  📄 stats.html
+📄 .dockerignore
+📄 .env
+📄 app.py
+📄 context.txt
+📄 docker-compose.yml
+📄 Dockerfile
+📄 LICENSE
+📄 README.md
+📄 requirements.txt
+
+
+======================================================================
+3. NOTES SUR LES FICHIERS
+======================================================================
+
+- app.py: Backend Flask. Sert UI/API. Gère users/prefs/Caddyfile. Déclenche le reload de Caddy.
+- Dockerfile: Build multi-stage de l'image Docker. Récupère Caddy, installe Python/dépendances/app.
+- docker-compose.yml: Orchestration du déploiement. Définit service, volumes, lit le .env.
+- docker/entrypoint.sh: Script d'init au démarrage conteneur. Crée configs par défaut, gère permissions.
+- docker/supervisord.conf: Config Supervisor. Gère les processus `caddy` (root) et `flaskapp` (user). Redirige logs.
+- templates/: Templates HTML (Jinja2) pour Flask. (index, stats, login, setup).
+- static/: Fichiers statiques. `script.js` (logique UI, API, parsing Caddyfile client-side), `style.css` (thèmes).
+- caddyfile/Caddyfile: Caddyfile d'exemple pour l'initialisation.
+- requirements.txt: Dépendances Python (Flask).
+- .env: Fichier d'exemple pour variables d'environnement (FLASK_SECRET_KEY, TZ).
+- .dockerignore: Exclut fichiers inutiles du build Docker.
+- README.md: Instructions de build et d'exécution.
+- context.txt: Ce fichier. Contexte pour le LLM.
+
+
+======================================================================
+4. ÉTAT DU PROJET
+======================================================================
+
+ACTIVE_BUGS:
+- Stats/Logs: La page de statistiques ne s'affiche pas correctement ou n'affiche aucune donnée, suggérant un problème avec la collecte ou le traitement des logs (`read_caddy_logs` dans `app.py` ou la configuration du logging de Caddy).
+
+ROADMAP:
+- Aucun pour le moment.
+
+IN_PROGRESS:
+- Aucun pour le moment.
+
+COMPLETED_FEATURES:
+- Architecture conteneurisée (Docker/Compose).
+- Gestion des processus (Supervisor).
+- Initialisation automatique (entrypoint.sh).
+- Persistance des données (volumes).
+- Authentification utilisateur.
+- UI de gestion du Caddyfile (Configurator + Raw Editor).
+- Sauvegarde et rechargement automatiques de Caddy.
+- UI de gestion des préférences.
+- Page de statistiques de base.
+- Assistant de configuration des logs Caddy.
+- Build Docker multi-architecture.
+- **BUGFIX**: Correction de l'état de la case "Skip TLS Verify" dans l'UI qui n'était pas correctement restauré après un rechargement de page.
+
+======================================================================
+5. RÈGLES DE MAINTENANCE DE CE FICHIER
+======================================================================
+
+- Mettre à jour ce fichier à chaque modification (feature, bugfix).
+- À la fin de chaque session, fournir le contenu complet et à jour de ce fichier.
