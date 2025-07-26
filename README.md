@@ -4,6 +4,10 @@ CaddyPanel is a simple, self-hosted web UI for managing a **Caddy v2** server. I
 
 This project is ideal for users who want a straightforward graphical interface for their Caddy instance, especially in home-server or small project environments.
 
+> [!WARNING]
+> **Development Warning**
+> This project was developed 100% by an artificial intelligence (Google Gemini) under human supervision. While functional, it is important to keep this unique development method in mind when using, modifying, or evaluating the code.
+
 ## Features
 
 - **All-in-one Docker Container**: Caddy and the Flask web UIe are managed by Supervisor within a single container.
@@ -17,12 +21,12 @@ This project is ideal for users who want a straightforward graphical interface f
 
 This is the recommended method for running CaddyPanel.
 
-%(1. Prerequisites
+### 1. Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
 - [Docker Compose](https://docs.docker.com/compose/install/)
 
-*2. Create the `docker-compose.yml` file
+### 2. Create the `docker-compose.yml` file
 
 Create a new file named `docker-compose.yml` and paste the following content into it:
 
@@ -117,11 +121,6 @@ CaddyPanel uses three volumes to persist data. By using relative paths (`./`), t
 -   `./caddypanel_dat`` : Stores CaddyPanel's application data, such as user accounts and panel preferences.
 
 Backing up these three folders is all you need to do to save your entire CaddyPanel setup.
-
-
-## Contributing
-
-Contributions are welcome! If you find a bug or have a feature request, please open an issue on the GitHub repository.
 
 
 ## License
