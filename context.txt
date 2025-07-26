@@ -17,6 +17,9 @@ Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour h
 2. ARBORESCENCE DU PROJET
 ======================================================================
 
+📁 .github/
+  📁 workflows/
+    📄 docker-publish.yml
 📁 caddyfile/
   📄 Caddyfile
 📁 docker/
@@ -58,6 +61,7 @@ Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour h
 - .dockerignore: Exclut fichiers inutiles du build Docker.
 - README.md: Instructions de build et d'exécution.
 - context.txt: Ce fichier. Contexte pour le LLM.
+- .github/workflows/docker-publish.yml: Workflow GitHub Actions pour build et push l'image Docker multi-arch sur Docker Hub.
 
 
 ======================================================================
@@ -68,7 +72,7 @@ ACTIVE_BUGS:
 - Stats/Logs: La page de statistiques ne s'affiche pas correctement ou n'affiche aucune donnée, suggérant un problème avec la collecte ou le traitement des logs (`read_caddy_logs` dans `app.py` ou la configuration du logging de Caddy).
 
 ROADMAP:
-- Aucun pour le moment.
+- Mise en place du build automatisé et de la publication sur Docker Hub via GitHub Actions.
 
 IN_PROGRESS:
 - Aucun pour le moment.
@@ -85,7 +89,7 @@ COMPLETED_FEATURES:
 - Page de statistiques de base.
 - Assistant de configuration des logs Caddy.
 - Build Docker multi-architecture.
-- **BUGFIX**: Correction de l'état de la case "Skip TLS Verify" dans l'UI qui n'était pas correctement restauré après un rechargement de page.
+- BUGFIX: Correction de l'état de la case "Skip TLS Verify" dans l'UI.
 
 ======================================================================
 5. RÈGLES DE MAINTENANCE DE CE FICHIER

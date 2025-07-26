@@ -1,99 +1,51 @@
-# Contexte du Projet CaddyPanel (pour LLM)
+# Nom du workflow qui s'affichera dans l'onglet Actions de GitHub
+name: Docker Publish CI
 
-Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour humain. Transmettre toutes les infos clés, sans tokens gaspillés en mise en page.
+# Définit les déclencheurs pour ce workflow
+on:
+  # Se déclenche à chaque push sur la branche "main"
+  push:
+    branches: [ "main" ]
+  # Permet de lancer manuellement ce workflow depuis l'interface GitHub
+  workflow_dispatch:
 
-======================================================================
-1. RÈGLES OPÉRATIONNELLES
-======================================================================
+# Définit les tâches (jobs) à exécuter
+jobs:
+  build-and-push-multi-arch:
+    # Utilise la dernière version d'Ubuntu comme environnement d'exécution
+    runs-on: ubuntu-latest
 
-- Fichier Manquant: Le signaler, demander son contenu, ne jamais l'inventer.
-- Modification Fichier: Pour un patch simple, fournir une commande `sed` en une ligne. Si complexe ou risqué, fournir le contenu complet du fichier. Ne pas utiliser d'autres outils (`awk`, `patch`).
-- Flux de Travail: Proposer une modification, puis attendre l'accord explicite de l'utilisateur avant de continuer.
-- Périmètre: Ne modifier que ce qui est strictement nécessaire à la tâche demandée. Pas de zèle.
-- Vérification: Après chaque modification, suggérer des points de contrôle ou des tests simples.
+    # Séquence des étapes pour ce job
+    steps:
+    # 1. Récupère le code du dépôt
+    - name: Check out repository code
+      uses: actions/checkout@v4
 
+    # 2. Met en place QEMU pour l'émulation multi-architecture
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
-======================================================================
-2. ARBORESCENCE DU PROJET
-======================================================================
+    # 3. Met en place Docker Buildx pour permettre les builds multi-architecture
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-📁 .github/
-  📁 workflows/
-    📄 docker-publish.yml
-📁 caddyfile/
-  📄 Caddyfile
-📁 docker/
-  📄 entrypoint.sh
-  📄 supervisord.conf
-📁 static/
-  📄 script.js
-  📄 style.css
-📁 templates/
-  📄 index.html
-  📄 login.html
-  📄 setup.html
-  📄 stats.html
-📄 .dockerignore
-📄 .env
-📄 app.py
-📄 context.txt
-📄 docker-compose.yml
-📄 Dockerfile
-📄 LICENSE
-📄 README.md
-📄 requirements.txt
+    # 4. Se connecte à Docker Hub en utilisant les secrets configurés
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-
-======================================================================
-3. NOTES SUR LES FICHIERS
-======================================================================
-
-- app.py: Backend Flask. Sert UI/API. Gère users/prefs/Caddyfile. Déclenche le reload de Caddy.
-- Dockerfile: Build multi-stage de l'image Docker. Récupère Caddy, installe Python/dépendances/app.
-- docker-compose.yml: Orchestration du déploiement. Définit service, volumes, lit le .env.
-- docker/entrypoint.sh: Script d'init au démarrage conteneur. Crée configs par défaut, gère permissions.
-- docker/supervisord.conf: Config Supervisor. Gère les processus `caddy` (root) et `flaskapp` (user). Redirige logs.
-- templates/: Templates HTML (Jinja2) pour Flask. (index, stats, login, setup).
-- static/: Fichiers statiques. `script.js` (logique UI, API, parsing Caddyfile client-side), `style.css` (thèmes).
-- caddyfile/Caddyfile: Caddyfile d'exemple pour l'initialisation.
-- requirements.txt: Dépendances Python (Flask).
-- .env: Fichier d'exemple pour variables d'environnement (FLASK_SECRET_KEY, TZ).
-- .dockerignore: Exclut fichiers inutiles du build Docker.
-- README.md: Instructions de build et d'exécution.
-- context.txt: Ce fichier. Contexte pour le LLM.
-- .github/workflows/docker-publish.yml: Workflow GitHub Actions pour build et push l'image Docker multi-arch sur Docker Hub.
-
-
-======================================================================
-4. ÉTAT DU PROJET
-======================================================================
-
-ACTIVE_BUGS:
-- Stats/Logs: La page de statistiques ne s'affiche pas correctement ou n'affiche aucune donnée, suggérant un problème avec la collecte ou le traitement des logs (`read_caddy_logs` dans `app.py` ou la configuration du logging de Caddy).
-
-ROADMAP:
-- Mise en place du build automatisé et de la publication sur Docker Hub via GitHub Actions.
-
-IN_PROGRESS:
-- Aucun pour le moment.
-
-COMPLETED_FEATURES:
-- Architecture conteneurisée (Docker/Compose).
-- Gestion des processus (Supervisor).
-- Initialisation automatique (entrypoint.sh).
-- Persistance des données (volumes).
-- Authentification utilisateur.
-- UI de gestion du Caddyfile (Configurator + Raw Editor).
-- Sauvegarde et rechargement automatiques de Caddy.
-- UI de gestion des préférences.
-- Page de statistiques de base.
-- Assistant de configuration des logs Caddy.
-- Build Docker multi-architecture.
-- BUGFIX: Correction de l'état de la case "Skip TLS Verify" dans l'UI.
-
-======================================================================
-5. RÈGLES DE MAINTENANCE DE CE FICHIER
-======================================================================
-
-- Mettre à jour ce fichier à chaque modification (feature, bugfix).
-- À la fin de chaque session, fournir le contenu complet et à jour de ce fichier.
+    # 5. Construit et pousse l'image Docker
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        # Construit l'image pour les architectures amd64 (standard) et arm64 (Raspberry Pi, etc.)
+        platforms: linux/amd64,linux/arm64
+        push: true
+        # IMPORTANT: Remplacez par votre nom d'utilisateur Docker Hub
+        tags: |
+          VOTRE_NOM_DOCKERHUB/caddypanel:latest
+          VOTRE_NOM_DOCKERHUB/caddypanel:${{ github.sha }}
