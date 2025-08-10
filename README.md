@@ -121,8 +121,3 @@ CaddyPanel uses three volumes to persist data. By using relative paths (`./`), t
 -   `./caddypanel_dat`` : Stores CaddyPanel's application data, such as user accounts and panel preferences.
 
 Backing up these three folders is all you need to do to save your entire CaddyPanel setup.
-
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
