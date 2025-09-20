@@ -1,5 +1,13 @@
-{
-	email administrator@example.fr
-	http_port 80
-	https_port 443
-}
+    {
+        email administrator@example.fr
+        http_port 80
+        https_port 443
+
+        log {
+            output stdout
+            format json {
+                time_format rfc3339
+            }
+            level INFO
+        }
+    }

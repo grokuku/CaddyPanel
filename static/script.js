@@ -48,6 +48,14 @@ const modalSiteIndexInput = document.getElementById('modal-site-index');
 const modalSaveBtn = document.getElementById('modal-save-btn');
 const modalCancelBtn = document.getElementById('modal-cancel-btn');
 const closeModalBtn = siteModal ? siteModal.querySelector('.close-modal-btn') : null;
+
+// Modal Config Mode Elements
+const modalStandardConfigDiv = document.getElementById('modal-standard-config');
+const modalCustomConfigDiv = document.getElementById('modal-custom-config');
+const modalSwitchToCustomBtn = document.getElementById('modal-switch-to-custom-btn');
+const modalSwitchToStandardBtn = document.getElementById('modal-switch-to-standard-btn');
+const modalCustomContentTextarea = document.getElementById('modal-custom-content');
+
 // Preference Form Fields
 const globalAdminEmailInput = document.getElementById('global-admin-email');
 const defaultSkipTlsVerifyInput = document.getElementById('default-skip-tls-verify');
@@ -86,7 +94,7 @@ function showToast(message, type = 'info', duration = 3000) {
         toast.classList.remove('show');
         setTimeout(() => {
             if (toast.parentNode === toastContainer) {
-                 toastContainer.removeChild(toast);
+                    toastContainer.removeChild(toast);
             }
         }, 500);
     };
@@ -134,6 +142,9 @@ if (siteModal) {
     const modalAuthCheckbox = document.getElementById('modal-authentik-enable');
     if (modalAuthCheckbox) modalAuthCheckbox.addEventListener('change', handleModalAuthentikCheckboxChange);
 }
+if (modalSwitchToCustomBtn) modalSwitchToCustomBtn.addEventListener('click', () => toggleModalMode('custom'));
+if (modalSwitchToStandardBtn) modalSwitchToStandardBtn.addEventListener('click', () => toggleModalMode('standard'));
+
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -214,13 +225,15 @@ function renderSitesTable() {
         siteLink.target = '_blank';
         cellHost.appendChild(siteLink);
 
-        if (site.reverse_proxy) {
+        if (site.is_custom) {
+            cellForward.innerHTML = `<em>Custom Config</em>`;
+        } else if (site.reverse_proxy) {
             const proxyLink = document.createElement('a');
             let rpUrl = site.reverse_proxy;
-            if (!rpUrl.startsWith('http://') && !rpUrl.startsWith('https://')) {
+            if (!rpUrl.startsWith('http://') && !rpUrl.startsWith('https://') && !rpUrl.startsWith('@')) {
                 rpUrl = `http://${rpUrl}`;
             }
-            proxyLink.href = rpUrl;
+            proxyLink.href = rpUrl.startsWith('@') ? '#' : rpUrl;
             proxyLink.textContent = site.reverse_proxy;
             proxyLink.target = '_blank';
             cellForward.appendChild(proxyLink);
@@ -231,11 +244,12 @@ function renderSitesTable() {
         let sslStatus = 'Auto';
         if (site.tls === 'internal') sslStatus = 'Internal';
         else if (site.tls === 'off') sslStatus = 'Off';
-        cellSSL.textContent = sslStatus;
+        cellSSL.textContent = site.is_custom ? '-' : sslStatus;
 
         const skipTlsCheckbox = document.createElement('input');
         skipTlsCheckbox.type = 'checkbox';
-        skipTlsCheckbox.checked = site.tls_skip_verify || false;
+        skipTlsCheckbox.checked = !site.is_custom && (site.tls_skip_verify || false);
+        skipTlsCheckbox.disabled = site.is_custom;
         skipTlsCheckbox.dataset.index = index;
         skipTlsCheckbox.dataset.action = 'toggle-skip-tls';
         skipTlsCheckbox.title = 'Toggle Skip TLS Verify for reverse_proxy target';
@@ -244,7 +258,8 @@ function renderSitesTable() {
 
         const authentikCheckbox = document.createElement('input');
         authentikCheckbox.type = 'checkbox';
-        authentikCheckbox.checked = !!site.forward_auth;
+        authentikCheckbox.checked = !site.is_custom && !!site.forward_auth;
+        authentikCheckbox.disabled = site.is_custom;
         authentikCheckbox.dataset.index = index;
         authentikCheckbox.dataset.action = 'toggle-authentik';
         authentikCheckbox.title = 'Toggle Authentik Integration';
@@ -293,7 +308,7 @@ async function handleTableCheckboxChange(event) {
     if (target.type !== 'checkbox' || !target.dataset.action) return;
 
     const row = target.closest('tr');
-     if (!row || !row.parentNode || row.parentNode.tagName !== 'TBODY') return;
+        if (!row || !row.parentNode || row.parentNode.tagName !== 'TBODY') return;
     const index = parseInt(target.dataset.index, 10); 
 
     if (isNaN(index) || index < 0 || index >= siteConfigs.length) {
@@ -331,6 +346,23 @@ async function handleTableCheckboxChange(event) {
 
 
 // --- Modal Management ---
+function toggleModalMode(mode) {
+    if (!modalStandardConfigDiv || !modalCustomConfigDiv) return;
+    if (mode === 'custom') {
+        const currentSiteData = collectStandardModalData();
+        // Generate a temporary Caddyfile content from standard fields to pre-fill the custom textarea
+        const tempSiteConfig = { ...currentSiteData, is_custom: false }; // Force standard generation
+        const generatedContent = generateCaddyfileBlock(tempSiteConfig);
+        
+        modalCustomContentTextarea.value = generatedContent;
+        modalStandardConfigDiv.style.display = 'none';
+        modalCustomConfigDiv.style.display = 'block';
+    } else { // 'standard'
+        modalStandardConfigDiv.style.display = 'block';
+        modalCustomConfigDiv.style.display = 'none';
+    }
+}
+
 function openSiteModal(index = -1) {
     if (!siteModal || !modalForm) return;
     modalForm.reset(); 
@@ -354,8 +386,18 @@ function openSiteModal(index = -1) {
             siteData.forward_auth = null;
         }
         siteData.tls = 'auto';
+        siteData.is_custom = false; // New sites are standard by default
     }
-    populateModal(siteData); 
+
+    if (siteData.is_custom) {
+        populateModal(siteData); // Still populate standard fields for address
+        modalCustomContentTextarea.value = siteData.custom_content || '';
+        toggleModalMode('custom');
+    } else {
+        populateModal(siteData); 
+        toggleModalMode('standard');
+    }
+
     siteModal.style.display = 'block';
 }
 
@@ -391,11 +433,8 @@ function populateModal(data) {
     siteModal.querySelectorAll('.options-section').forEach(section => { section.style.display = 'none'; });
 }
 
-async function saveSiteFromModal() {
-    if (!modalForm) return;
-    const index = parseInt(modalSiteIndexInput.value, 10);
+function collectStandardModalData() {
     const siteData = {
-        address: document.getElementById('modal-server-address').value.trim(), 
         reverse_proxy: document.getElementById('modal-reverse-proxy').value.trim(),
         tls_skip_verify: document.getElementById('modal-tls-skip-verify').checked, 
         root: document.getElementById('modal-root-dir').value.trim(),
@@ -412,12 +451,30 @@ async function saveSiteFromModal() {
             copy_headers: document.getElementById('modal-authentik-copy-headers').value.trim(), 
             trusted_proxies: document.getElementById('modal-authentik-trusted-proxies').value.trim() 
         };
-        if (!siteData.forward_auth.outpost_url) {
+    }
+    return siteData;
+}
+
+async function saveSiteFromModal() {
+    if (!modalForm) return;
+    const index = parseInt(modalSiteIndexInput.value, 10);
+    const address = document.getElementById('modal-server-address').value.trim();
+    if (!address) { showToast("Site Address is required.", "warning"); return; }
+
+    let siteData = { address: address };
+
+    const isCustomMode = modalCustomConfigDiv.style.display !== 'none';
+
+    if (isCustomMode) {
+        siteData.is_custom = true;
+        siteData.custom_content = modalCustomContentTextarea.value.trim();
+    } else {
+        const standardData = collectStandardModalData();
+        siteData = { ...siteData, ...standardData, is_custom: false, custom_content: null };
+        if (siteData.forward_auth && !siteData.forward_auth.outpost_url) {
             showToast("Authentik Outpost URL is required if Authentik is enabled.", "warning");
         }
     }
-
-    if (!siteData.address) { showToast("Site Address is required.", "warning"); return; }
 
     if (index === -1) { 
         siteConfigs.push(siteData); 
@@ -437,9 +494,11 @@ function handleModalToggleClick(event) {
     if (event.target.classList.contains('modal-toggle-btn')) {
         event.preventDefault(); 
         const sectionClass = event.target.dataset.section; 
-        const section = siteModal.querySelector(`.${sectionClass}`); 
-        if (section) { 
-            section.style.display = section.style.display === 'none' ? 'block' : 'none'; 
+        if (sectionClass) {
+            const section = siteModal.querySelector(`.${sectionClass}`); 
+            if (section) { 
+                section.style.display = section.style.display === 'none' ? 'block' : 'none'; 
+            }
         }
     }
 }
@@ -463,6 +522,42 @@ function handleModalAuthentikCheckboxChange(event) {
 }
 
 // --- Caddyfile Generation (from siteConfigs array) ---
+function generateCaddyfileBlock(site) {
+    let blockContent = '';
+    if (site.root) blockContent += `\troot * ${site.root}\n`; 
+    if (site.file_server) blockContent += `\tfile_server\n`;
+    
+    if (site.reverse_proxy) { 
+        const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
+        blockContent += `\treverse_proxy ${p}`; 
+        if (site.tls_skip_verify && p.startsWith('https://')) { 
+            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
+        } else { 
+            blockContent += `\n`; 
+        } 
+    }
+
+    if (site.tls && site.tls !== 'auto') { 
+        blockContent += `\ttls ${site.tls}\n`; 
+    }
+
+    if (site.log) { 
+        blockContent += `\tlog {\n\t\toutput ${site.log}\n\t}\n`; 
+    }
+    
+    if (site.forward_auth && site.forward_auth.outpost_url) { 
+        blockContent += `\n\t# --- Authentik Configuration --- #\n`;
+        blockContent += `\tforward_auth ${site.forward_auth.outpost_url} {\n`;
+        if (site.forward_auth.uri) blockContent += `\t\turi ${site.forward_auth.uri}\n`;
+        if (site.forward_auth.copy_headers) blockContent += `\t\tcopy_headers ${site.forward_auth.copy_headers}\n`;
+        if (site.forward_auth.trusted_proxies) blockContent += `\t\ttrusted_proxies ${site.forward_auth.trusted_proxies}\n`;
+        blockContent += `\t}\n`;
+    } else if (site.forward_auth) { 
+        blockContent += `\n\t# --- Authentik Configuration (Enabled but Outpost URL missing or invalid) --- #\n`;
+    }
+    return blockContent.trim();
+}
+
 function generateCaddyfileFromData() {
     if (!outputTextarea || !globalAdminEmailInput) { return; }
     let caddyfileContent = ''; 
@@ -480,37 +575,14 @@ function generateCaddyfileFromData() {
     siteConfigs.forEach(site => {
         if (!site.address) return; 
         caddyfileContent += `${site.address} {\n`;
-        if (site.root) caddyfileContent += `\troot * ${site.root}\n`; 
-        if (site.file_server) caddyfileContent += `\tfile_server\n`;
         
-        if (site.reverse_proxy) { 
-            const p = site.reverse_proxy.includes('://') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
-            caddyfileContent += `\treverse_proxy ${p}`; 
-            if (site.tls_skip_verify && p.startsWith('https://')) { 
-                caddyfileContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
-            } else { 
-                caddyfileContent += `\n`; 
-            } 
+        if (site.is_custom) {
+            const indentedContent = (site.custom_content || '').split('\n').map(line => `\t${line}`).join('\n');
+            caddyfileContent += `${indentedContent}\n`;
+        } else {
+            caddyfileContent += generateCaddyfileBlock(site) + '\n';
         }
 
-        if (site.tls && site.tls !== 'auto') { 
-            caddyfileContent += `\ttls ${site.tls}\n`; 
-        }
-
-        if (site.log) { 
-            caddyfileContent += `\tlog {\n\t\toutput ${site.log}\n\t}\n`; 
-        }
-        
-        if (site.forward_auth && site.forward_auth.outpost_url) { 
-            caddyfileContent += `\n\t# --- Authentik Configuration --- #\n`;
-            caddyfileContent += `\tforward_auth ${site.forward_auth.outpost_url} {\n`;
-            if (site.forward_auth.uri) caddyfileContent += `\t\turi ${site.forward_auth.uri}\n`;
-            if (site.forward_auth.copy_headers) caddyfileContent += `\t\tcopy_headers ${site.forward_auth.copy_headers}\n`;
-            if (site.forward_auth.trusted_proxies) caddyfileContent += `\t\ttrusted_proxies ${site.forward_auth.trusted_proxies}\n`;
-            caddyfileContent += `\t}\n`;
-        } else if (site.forward_auth) { 
-            caddyfileContent += `\n\t# --- Authentik Configuration (Enabled but Outpost URL missing or invalid) --- #\n`;
-        }
         caddyfileContent += `}\n\n`;
     });
     outputTextarea.value = caddyfileContent.trim();
@@ -653,37 +725,28 @@ function parseCaddyfile(content) {
         
         const siteAddress = potentialAddress; 
         const siteContent = match[2];
-        const siteData = { address: siteAddress, tls: 'auto', tls_skip_verify: false, forward_auth: null };
+        const siteData = { address: siteAddress, tls: 'auto', tls_skip_verify: false, forward_auth: null, is_custom: false, custom_content: null };
         
+        // --- Standard parsing logic ---
         const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m); 
         if (rootMatch) siteData.root = rootMatch[1];
-        
         if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
-        
-        // START OF BUG FIX
-        // Correctly parse reverse_proxy and its 'tls_insecure_skip_verify' option within a block.
         const rpBlockRegex = /^\s*reverse_proxy\s+([^\s{]+)\s*(?:\{([\s\S]*?)\})?/m;
         const rpMatch = siteContent.match(rpBlockRegex);
-
-        // Heuristic to avoid matching a forward_auth directive if it's written as a raw reverse_proxy.
         if (rpMatch && !rpMatch[1].includes('/outpost.goauthentik.io/')) {
             siteData.reverse_proxy = rpMatch[1].trim();
-            const blockContent = rpMatch[2] || ''; // Content within {}
+            const blockContent = rpMatch[2] || '';
             if (blockContent.includes('tls_insecure_skip_verify')) {
                 siteData.tls_skip_verify = true;
             }
         }
-        // END OF BUG FIX
-
         const tlsMatch = siteContent.match(/^\s*tls\s+([^\s]+)/m);
         if (tlsMatch) siteData.tls = tlsMatch[1].trim();
-        
         const logBlockMatch = siteContent.match(/^\s*log\s*\{([\s\S]*?)\s*}/m);
         if (logBlockMatch) { 
             const logOutputMatch = logBlockMatch[1].match(/^\s*output\s+([^\s]+)/m); 
             if (logOutputMatch) siteData.log = logOutputMatch[1]; 
         }
-        
         const forwardAuthBlockRegex = /^\s*forward_auth\s+([^\s]+)\s*\{([\s\S]*?)\s*}/m;
         const forwardAuthMatch = siteContent.match(forwardAuthBlockRegex);
         if (forwardAuthMatch) {
@@ -694,6 +757,23 @@ function parseCaddyfile(content) {
                 trusted_proxies: (forwardAuthMatch[2].match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
             };
         }
+        // --- End of standard parsing ---
+
+        // --- Check for custom content ---
+        // Generate what the standard block *should* look like based on parsed data
+        const regeneratedStandardContent = generateCaddyfileBlock(siteData);
+        // A simple way to check for custom config is to see if the original content
+        // contains directives not accounted for in our simple regeneration.
+        // This is a heuristic and might not be perfect.
+        // Let's remove whitespace and compare.
+        const originalStripped = siteContent.replace(/\s+/g, '').replace(/#.*?(\r\n|\n|\r)/g, '');
+        const regeneratedStripped = regeneratedStandardContent.replace(/\s+/g, '').replace(/#.*?(\r\n|\n|\r)/g, '');
+
+        if (originalStripped !== regeneratedStripped) {
+            siteData.is_custom = true;
+            siteData.custom_content = siteContent.trim();
+        }
+
         siteConfigs.push(siteData);
     }
     renderSitesTable();
