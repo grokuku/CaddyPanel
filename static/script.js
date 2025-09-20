@@ -577,10 +577,13 @@ function generateCaddyfileFromData() {
         caddyfileContent += `${site.address} {\n`;
         
         if (site.is_custom) {
-            const indentedContent = (site.custom_content || '').split('\n').map(line => `\t${line}`).join('\n');
+            const customContentWithMarker = "# CADDYPANEL_CUSTOM_CONFIG\n" + (site.custom_content || '');
+            const indentedContent = customContentWithMarker.split('\n').map(line => `\t${line}`).join('\n');
             caddyfileContent += `${indentedContent}\n`;
         } else {
-            caddyfileContent += generateCaddyfileBlock(site) + '\n';
+            const standardContent = generateCaddyfileBlock(site);
+            const indentedContent = standardContent.split('\n').map(line => `\t${line}`).join('\n');
+            caddyfileContent += `${indentedContent}\n`;
         }
 
         caddyfileContent += `}\n\n`;
@@ -725,9 +728,22 @@ function parseCaddyfile(content) {
         
         const siteAddress = potentialAddress; 
         const siteContent = match[2];
-        const siteData = { address: siteAddress, tls: 'auto', tls_skip_verify: false, forward_auth: null, is_custom: false, custom_content: null };
+        const siteData = { address: siteAddress, is_custom: false, custom_content: null };
         
-        // --- Standard parsing logic ---
+        // **BUG FIX:** Explicit check for custom config marker
+        if (siteContent.includes('# CADDYPANEL_CUSTOM_CONFIG')) {
+            siteData.is_custom = true;
+            // Remove the marker line for display in the textarea
+            siteData.custom_content = siteContent.replace(/# CADDYPANEL_CUSTOM_CONFIG\s*\n?/, '').trim();
+            siteConfigs.push(siteData);
+            continue; // Skip to the next site block
+        }
+
+        // --- Standard parsing logic (only if not custom) ---
+        siteData.tls = 'auto';
+        siteData.tls_skip_verify = false;
+        siteData.forward_auth = null;
+
         const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m); 
         if (rootMatch) siteData.root = rootMatch[1];
         if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
@@ -757,23 +773,6 @@ function parseCaddyfile(content) {
                 trusted_proxies: (forwardAuthMatch[2].match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
             };
         }
-        // --- End of standard parsing ---
-
-        // --- Check for custom content ---
-        // Generate what the standard block *should* look like based on parsed data
-        const regeneratedStandardContent = generateCaddyfileBlock(siteData);
-        // A simple way to check for custom config is to see if the original content
-        // contains directives not accounted for in our simple regeneration.
-        // This is a heuristic and might not be perfect.
-        // Let's remove whitespace and compare.
-        const originalStripped = siteContent.replace(/\s+/g, '').replace(/#.*?(\r\n|\n|\r)/g, '');
-        const regeneratedStripped = regeneratedStandardContent.replace(/\s+/g, '').replace(/#.*?(\r\n|\n|\r)/g, '');
-
-        if (originalStripped !== regeneratedStripped) {
-            siteData.is_custom = true;
-            siteData.custom_content = siteContent.trim();
-        }
-
         siteConfigs.push(siteData);
     }
     renderSitesTable();
