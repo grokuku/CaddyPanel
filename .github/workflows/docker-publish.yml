@@ -27,6 +27,7 @@ jobs:
 
     # 3. Met en place Docker Buildx pour permettre les builds multi-architecture
     - name: Set up Docker Buildx
+      id: buildx # Ajout d'un ID pour pouvoir y faire référence plus tard
       uses: docker/setup-buildx-action@v3
 
     # 4. Se connecte à Docker Hub en utilisant les secrets configurés
@@ -36,7 +37,14 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # 5. Construit et pousse l'image Docker
+    # 5. Définit les métadonnées de l'image (tags, etc.)
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: holaflenain/caddypanel
+
+    # 6. Construit et pousse l'image Docker (avec cache)
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -45,7 +53,8 @@ jobs:
         # Construit l'image pour les architectures amd64 (standard) et arm64 (Raspberry Pi, etc.)
         platforms: linux/amd64,linux/arm64
         push: true
-        # IMPORTANT: Remplacez par votre nom d'utilisateur Docker Hub
-        tags: |
-          holaflenain/caddypanel:latest
-          holaflenain/caddypanel:${{ github.sha }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        # Ajout du cache pour accélérer les builds futurs
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
