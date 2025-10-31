@@ -12,6 +12,7 @@ from flask import (Flask, render_template, url_for, request, jsonify, abort,
                    session, redirect, flash)
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta 
+from caddy_parser.parser import CaddyfileParser
 
 # --- Configuration ---
 # ... (inchangé)
@@ -26,7 +27,6 @@ BASE_DIR = Path('.').resolve()
 DEFAULT_PREFERENCES = {
     "theme": "theme-light-gray",
     "caddyfilePath": str(CADDY_CONFIG_FILE), 
-    "caddyReloadCmd": f"caddy reload --config {str(CADDY_CONFIG_FILE)} --adapter caddyfile",
     "globalAdminEmail": "", 
     "defaultAuthentikEnabled": False, 
     "defaultAuthentikOutpostUrl": "http://authentik.local:9000", 
@@ -214,8 +214,7 @@ def post_preferences():
                     continue
                 if key == "globalAdminEmail" and value and not re.match(r"[^@]+@[^@]+\.[^@]+", value): validation_errors.append(f"Invalid format for '{key}'")
                 elif key == "caddyfilePath": value = str(CADDY_CONFIG_FILE)
-                elif key == "caddyReloadCmd" and not value: validation_errors.append(f"Invalid value for '{key}': Cannot be empty.")
-                if not any(err.startswith(f"Invalid type for '{key}'") or (f"Invalid format for '{key}'" in err) or (f"Invalid value for '{key}'" in err) for err in validation_errors):
+                if not any(err.startswith(f"Invalid type for '{key}'") or (f"Invalid format for '{key}'" in err) for err in validation_errors):
                      validated_prefs[key] = value
                 else: validated_prefs[key] = current_prefs.get(key, default_value)
             else: validated_prefs[key] = current_prefs.get(key, default_value)
@@ -285,11 +284,9 @@ def save_caddyfile_content():
 @login_required
 def reload_caddy_config():
     # ... (code existant pour reload_caddy_config - inchangé, flash message retiré)
-    prefs = load_preferences()
-    reload_cmd_str = prefs.get('caddyReloadCmd')
-    if not reload_cmd_str: return jsonify({"status": "error", "message": "Reload command not configured."}), 400
     try:
-        result = subprocess.run(reload_cmd_str, shell=True, capture_output=True, text=True, timeout=30, check=False)
+        command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
         if result.returncode == 0:
             return jsonify({"status": "success", "message": "Caddy reloaded.", "output": result.stdout})
         else:
@@ -419,93 +416,49 @@ def get_global_stats():
 @app.route('/api/caddyfile/configure_logging', methods=['POST'])
 @login_required
 def configure_caddyfile_logging():
-    """
-    Tente d'ajouter ou de modifier la configuration de log globale dans le Caddyfile
-    pour utiliser JSON vers stdout.
-    """
     caddyfile_path = CADDY_CONFIG_FILE
-    desired_log_config = """
-    log {
-        output stdout
-        format json {
-            time_format rfc3339
-        }
-        level INFO
-    }
-"""
     try:
         if not caddyfile_path.exists():
-            # Si le Caddyfile n'existe pas, on le crée avec le bloc global et le log
-            # Cela pourrait être plus simple si l'entrypoint le crée toujours.
-            # Pour l'instant, on assume qu'il est peu probable qu'il n'existe pas si l'app tourne.
-            # Ou on crée un Caddyfile très basique.
-            # On va plutôt retourner une erreur si le fichier n'existe pas, car l'utilisateur devrait
-            # avoir au moins un Caddyfile de base via l'UI ou l'initialisation.
             return jsonify({"status": "error", "message": f"Caddyfile not found at {caddyfile_path}. Cannot configure logging."}), 500
 
-        content = caddyfile_path.read_text(encoding='utf-8')
-        new_content = ""
+        parser = CaddyfileParser()
+        caddyfile = parser.parse_file(caddyfile_path)
 
-        # Regex pour trouver un bloc global existant { ... } au début du fichier
-        # (simplifié, ne gère pas les commentaires complexes ou les blocs imbriqués au niveau global)
-        global_block_match = re.match(r"^\s*\{([\s\S]*?)\}\s*", content, re.MULTILINE)
+        # Find or create the global block
+        global_block = next((block for block in caddyfile if block.block_name == "{}"), None)
+        if not global_block:
+            global_block = parser.make_server_block("{}")
+            caddyfile.insert(0, global_block)
 
-        if global_block_match:
-            # Bloc global trouvé
-            global_content = global_block_match.group(1)
-            start_global_block = global_block_match.start(1) -1 # Inclure le '{'
-            end_global_block = global_block_match.end(1) + 1 # Inclure le '}'
-            
-            # Vérifier si 'log {' est déjà dans le bloc global
-            if re.search(r"^\s*log\s*\{", global_content, re.MULTILINE):
-                # Remplacer le bloc log existant. C'est la partie la plus délicate.
-                # Une approche simple est de supprimer l'ancien bloc log et d'ajouter le nouveau.
-                # Attention : cela peut supprimer des configurations de log custom.
-                # Pour cette version, on va être un peu direct :
-                # On suppose que si l'utilisateur clique, il veut NOTRE config de log.
-                
-                # Enlever l'ancien bloc log (simpliste, pourrait être amélioré avec un meilleur parsing)
-                # Ce regex tente de matcher 'log { ... }' en faisant attention aux accolades imbriquées simples.
-                # Ce n'est PAS parfait pour des Caddyfiles très complexes.
-                cleaned_global_content = re.sub(r"^\s*log\s*\{[\s\S]*?\}\s*$", "", global_content, flags=re.MULTILINE).strip()
-                
-                # Ajouter le nouveau bloc log au contenu global nettoyé
-                if cleaned_global_content:
-                    # S'il reste d'autres directives globales, ajouter le log avec une ligne vide avant/après pour la lisibilité
-                    modified_global_content = f"{desired_log_config.strip()}\n\n{cleaned_global_content}" if cleaned_global_content.strip() else desired_log_config.strip()
-                else:
-                    modified_global_content = desired_log_config.strip()
+        # Remove existing log block if it exists
+        global_block.content = [item for item in global_block.content if not (isinstance(item, dict) and item.get('directive') == 'log')]
 
-                new_content = content[:start_global_block] + "{\n" + modified_global_content + "\n}" + content[end_global_block:]
+        # Add the new log block
+        log_block = parser.make_server_block("log")
+        log_block.content.append(parser.make_directive("output", "stdout"))
+        format_block = parser.make_server_block("format json")
+        format_block.content.append(parser.make_directive("time_format", "rfc3339"))
+        log_block.content.append(format_block)
+        log_block.content.append(parser.make_directive("level", "INFO"))
+        global_block.content.insert(0, log_block)
 
+        # Save the modified Caddyfile
+        parser.save_caddyfile(caddyfile, caddyfile_path)
+
+        # Reload Caddy
+        try:
+            command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+            if result.returncode == 0:
+                return jsonify({"status": "success", "message": "Caddyfile updated for JSON logging and Caddy reloaded successfully."})
             else:
-                # Pas de bloc log, ajouter le nôtre au début du contenu du bloc global
-                modified_global_content = f"{desired_log_config.strip()}\n{global_content.strip()}"
-                new_content = content[:start_global_block] + "{\n" + modified_global_content + "\n}" + content[end_global_block:]
-        else:
-            # Pas de bloc global, en créer un au début du fichier avec notre log config
-            new_content = "{\n" + desired_log_config.strip() + "\n}\n\n" + content
+                error_detail = (result.stderr or result.stdout or "Unknown error during reload.")[:500]
+                return jsonify({"status": "warning", 
+                                "message": f"Caddyfile updated for JSON logging, but Caddy reload failed (Code: {result.returncode}). Check Caddy logs or Caddyfile syntax.",
+                                "details": error_detail})
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"An unexpected error occurred during Caddy reload: {e}"}), 500
 
-        # Sauvegarder le nouveau contenu
-        caddyfile_path.write_text(new_content, encoding='utf-8')
-        
-        # Recharger Caddy (utilise la même logique que l'API /api/caddy/reload)
-        prefs = load_preferences()
-        reload_cmd_str = prefs.get('caddyReloadCmd')
-        if not reload_cmd_str:
-            return jsonify({"status": "warning", "message": "Caddyfile updated for logging, but reload command not configured. Please reload Caddy manually."}), 200
-
-        result = subprocess.run(reload_cmd_str, shell=True, capture_output=True, text=True, timeout=30, check=False)
-        if result.returncode == 0:
-            return jsonify({"status": "success", "message": "Caddyfile updated for JSON logging and Caddy reloaded successfully."})
-        else:
-            error_detail = (result.stderr or result.stdout or "Unknown error during reload.")[:500]
-            return jsonify({"status": "warning", 
-                            "message": f"Caddyfile updated for JSON logging, but Caddy reload failed (Code: {result.returncode}). Check Caddy logs or Caddyfile syntax.",
-                            "details": error_detail})
-
-    except PermissionError:
-        return jsonify({"status": "error", "message": f"Permission denied modifying Caddyfile at {caddyfile_path}"}), 500
     except Exception as e:
         print(f"Error configuring Caddyfile logging: {e}")
         return jsonify({"status": "error", "message": f"An unexpected error occurred: {e}"}), 500

@@ -5,4 +5,6 @@
 #                     Keeping only Flask and Werkzeug for clarity and reproducibility.
 
 Flask>=3.0.0,<4.0.0
-Werkzeug>=3.0.0,<4.0.0
+Werkzeug>=3.0.0,<4.0.0>
+gunicorn>=22.0.0,<23.0.0>
+caddy-parser>=0.1.3,<0.2.0
