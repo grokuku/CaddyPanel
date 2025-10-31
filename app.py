@@ -12,7 +12,6 @@ from flask import (Flask, render_template, url_for, request, jsonify, abort,
                    session, redirect, flash)
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta 
-from caddy_parser.parser import CaddyfileParser
 
 # --- Configuration ---
 # ... (inchangé)
@@ -416,36 +415,52 @@ def get_global_stats():
 @app.route('/api/caddyfile/configure_logging', methods=['POST'])
 @login_required
 def configure_caddyfile_logging():
+    """
+    Tente d'ajouter ou de modifier la configuration de log globale dans le Caddyfile
+    pour utiliser JSON vers stdout.
+    """
     caddyfile_path = CADDY_CONFIG_FILE
+    desired_log_config = """
+    log {
+        output stdout
+        format json {
+            time_format rfc3339
+        }
+        level INFO
+    }
+"""
     try:
         if not caddyfile_path.exists():
             return jsonify({"status": "error", "message": f"Caddyfile not found at {caddyfile_path}. Cannot configure logging."}), 500
 
-        parser = CaddyfileParser()
-        caddyfile = parser.parse_file(caddyfile_path)
+        content = caddyfile_path.read_text(encoding='utf-8')
+        new_content = ""
 
-        # Find or create the global block
-        global_block = next((block for block in caddyfile if block.block_name == "{}"), None)
-        if not global_block:
-            global_block = parser.make_server_block("{}")
-            caddyfile.insert(0, global_block)
+        global_block_match = re.match(r"^\s*\{([\s\S]*?)\}\s*", content, re.MULTILINE)
 
-        # Remove existing log block if it exists
-        global_block.content = [item for item in global_block.content if not (isinstance(item, dict) and item.get('directive') == 'log')]
+        if global_block_match:
+            global_content = global_block_match.group(1)
+            start_global_block = global_block_match.start(1) -1
+            end_global_block = global_block_match.end(1) + 1
+            
+            if re.search(r"^\s*log\s*\{", global_content, re.MULTILINE):
+                cleaned_global_content = re.sub(r"^\s*log\s*\{[\s\S]*?\}\s*$", "", global_content, flags=re.MULTILINE).strip()
+                
+                if cleaned_global_content:
+                    modified_global_content = f"{desired_log_config.strip()}\n\n{cleaned_global_content}" if cleaned_global_content.strip() else desired_log_config.strip()
+                else:
+                    modified_global_content = desired_log_config.strip()
 
-        # Add the new log block
-        log_block = parser.make_server_block("log")
-        log_block.content.append(parser.make_directive("output", "stdout"))
-        format_block = parser.make_server_block("format json")
-        format_block.content.append(parser.make_directive("time_format", "rfc3339"))
-        log_block.content.append(format_block)
-        log_block.content.append(parser.make_directive("level", "INFO"))
-        global_block.content.insert(0, log_block)
+                new_content = content[:start_global_block] + "{\n" + modified_global_content + "\n}" + content[end_global_block:]
 
-        # Save the modified Caddyfile
-        parser.save_caddyfile(caddyfile, caddyfile_path)
+            else:
+                modified_global_content = f"{desired_log_config.strip()}\n{global_content.strip()}"
+                new_content = content[:start_global_block] + "{\n" + modified_global_content + "\n}" + content[end_global_block:]
+        else:
+            new_content = "{\n" + desired_log_config.strip() + "\n}\n\n" + content
 
-        # Reload Caddy
+        caddyfile_path.write_text(new_content, encoding='utf-8')
+        
         try:
             command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
             result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
@@ -459,6 +474,8 @@ def configure_caddyfile_logging():
         except Exception as e:
             return jsonify({"status": "error", "message": f"An unexpected error occurred during Caddy reload: {e}"}), 500
 
+    except PermissionError:
+        return jsonify({"status": "error", "message": f"Permission denied modifying Caddyfile at {caddyfile_path}"}), 500
     except Exception as e:
         print(f"Error configuring Caddyfile logging: {e}")
         return jsonify({"status": "error", "message": f"An unexpected error occurred: {e}"}), 500
