@@ -1,6 +1,6 @@
-# Mode d'emploi:
-# Description: Application backend Flask pour l'interface CaddyPanel.
-# ... (reste des commentaires et imports initiaux) ...
+# Usage:
+# Description: Flask backend application for the CaddyPanel interface.
+# ... (rest of initial comments and imports) ...
 
 import json
 import os
@@ -14,7 +14,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta 
 
 # --- Configuration ---
-# ... (inchangé)
+# ... (unchanged)
 APP_DATA_DIR = Path(os.environ.get('APP_DATA_DIR', '.')).resolve() 
 CADDY_CONFIG_FILE = Path(os.environ.get('CADDY_CONFIG', '/etc/caddy/Caddyfile')).resolve()
 CADDY_ACCESS_LOG_FILE = Path(os.environ.get('CADDY_ACCESS_LOG_FILE', '/var/log/caddy_access.json.log'))
@@ -43,7 +43,7 @@ app.config['PREFERENCES_FILE'] = PREFERENCES_FILE
 app.config['CADDY_ACCESS_LOG_FILE'] = CADDY_ACCESS_LOG_FILE
 
 # --- User Management Helpers ---
-# ... (load_users, save_users, get_admin_user - inchangés)
+# ... (load_users, save_users, get_admin_user - unchanged)
 def load_users():
     users_file_path = app.config['USERS_FILE']
     if not users_file_path.exists(): return {}
@@ -68,7 +68,7 @@ def get_admin_user():
     return next(iter(users.values()), None) if users else None
 
 # --- Preference Helpers ---
-# ... (load_preferences, save_preferences - inchangés)
+# ... (load_preferences, save_preferences - unchanged)
 def load_preferences():
     prefs_file_path = app.config['PREFERENCES_FILE']
     if not prefs_file_path.exists():
@@ -98,7 +98,7 @@ def save_preferences(prefs):
         return False
 
 # --- Decorators ---
-# ... (login_required, admin_setup_required - inchangés)
+# ... (login_required, admin_setup_required - unchanged)
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -118,11 +118,11 @@ def admin_setup_required(f):
     return decorated_function
 
 # --- Routes ---
-# ... (index, setup, login, logout, api/preferences, etc. - inchangés jusqu'à la partie stats)
+# ... (index, setup, login, logout, api/preferences, etc. - unchanged until the stats part)
 @app.route('/')
 @login_required
 def index():
-    # ... (code existant pour index - inchangé)
+    # ... (existing code for index - unchanged)
     prefs = load_preferences()
     caddyfile_to_load = CADDY_CONFIG_FILE
     initial_caddyfile_content = None
@@ -141,7 +141,7 @@ def index():
 @app.route('/setup', methods=['GET', 'POST'])
 @admin_setup_required
 def setup():
-    # ... (code existant pour setup - inchangé)
+    # ... (existing code for setup - unchanged)
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -162,7 +162,7 @@ def setup():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # ... (code existant pour login - inchangé)
+    # ... (existing code for login - unchanged)
     if 'username' in session: return redirect(url_for('index'))
     if not get_admin_user():
          flash("No admin account found. Please set up the administrator.", "info")
@@ -181,7 +181,7 @@ def login():
 
 @app.route('/logout')
 def logout():
-    # ... (code existant pour logout - inchangé)
+    # ... (existing code for logout - unchanged)
     session.pop('username', None)
     flash("You have been logged out.", "info")
     return redirect(url_for('login'))
@@ -189,14 +189,14 @@ def logout():
 @app.route('/api/preferences', methods=['GET'])
 @login_required
 def get_preferences():
-    # ... (code existant pour get_preferences - inchangé)
+    # ... (existing code for get_preferences - unchanged)
     prefs = load_preferences()
     return jsonify(prefs)
 
 @app.route('/api/preferences', methods=['POST'])
 @login_required
 def post_preferences():
-    # ... (code existant pour post_preferences - inchangé)
+    # ... (existing code for post_preferences - unchanged)
     try:
         new_prefs_input = request.get_json()
         if not isinstance(new_prefs_input, dict): return jsonify({"status": "error", "message": "Invalid data format"}), 400
@@ -230,7 +230,7 @@ def post_preferences():
 @app.route('/api/browse', methods=['GET'])
 @login_required
 def browse_files():
-    # ... (code existant pour browse_files - inchangé)
+    # ... (existing code for browse_files - unchanged)
     req_path_str = request.args.get('path', '.')
     browse_base = BASE_DIR
     try:
@@ -252,7 +252,7 @@ def browse_files():
 @app.route('/api/readfile', methods=['GET'])
 @login_required
 def read_file():
-    # ... (code existant pour read_file - inchangé)
+    # ... (existing code for read_file - unchanged)
     req_path_str = request.args.get('path')
     if not req_path_str: return jsonify({"status": "error", "message": "No path"}), 400
     try:
@@ -268,7 +268,7 @@ def read_file():
 @app.route('/api/caddyfile/save', methods=['POST'])
 @login_required
 def save_caddyfile_content():
-    # ... (code existant pour save_caddyfile_content - inchangé, flash message retiré)
+    # ... (existing code for save_caddyfile_content - unchanged, flash message removed)
     try:
         data = request.get_json()
         content = data.get('content')
@@ -282,7 +282,7 @@ def save_caddyfile_content():
 @app.route('/api/caddy/reload', methods=['POST'])
 @login_required
 def reload_caddy_config():
-    # ... (code existant pour reload_caddy_config - inchangé, flash message retiré)
+    # ... (existing code for reload_caddy_config - unchanged, flash message removed)
     try:
         command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
         result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
@@ -291,12 +291,12 @@ def reload_caddy_config():
         else:
             error_detail = (result.stderr or result.stdout or "Unknown error.")[:500]
             return jsonify({"status": "error", "message": f"Reload failed. Code: {result.returncode}.", "details": error_detail}), 500
-    except FileNotFoundError: return jsonify({"status": "error", "message": "Caddy command not found."}), 500
-    except subprocess.TimeoutExpired: return jsonify({"status": "error", "message": "Reload command timed out."}), 500
+    except FileNotFoundError: return jsonify({"status": "error", "message": "Caddy command not found."}),
+    except subprocess.TimeoutExpired: return jsonify({"status": "error", "message": "Reload command timed out."}),
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
 
 # --- Real Log Data Processing for Stats Page ---
-# ... (read_caddy_logs, _process_logs_for_stats - inchangés)
+# ... (read_caddy_logs, _process_logs_for_stats - unchanged)
 def read_caddy_logs():
     log_file_path = app.config['CADDY_ACCESS_LOG_FILE']
     logs = []
@@ -411,13 +411,13 @@ def get_global_stats():
     if log_read_error: stats_data["log_read_error"] = log_read_error
     return jsonify(stats_data)
 
-# --- Nouvelle API pour configurer le logging dans Caddyfile ---
+# --- New API to configure logging in Caddyfile ---
 @app.route('/api/caddyfile/configure_logging', methods=['POST'])
 @login_required
 def configure_caddyfile_logging():
     """
-    Tente d'ajouter ou de modifier la configuration de log globale dans le Caddyfile
-    pour utiliser JSON vers stdout.
+    Attempts to add or modify the global log configuration in the Caddyfile
+    to use JSON to stdout.
     """
     caddyfile_path = CADDY_CONFIG_FILE
     desired_log_config = """
@@ -481,7 +481,7 @@ def configure_caddyfile_logging():
         return jsonify({"status": "error", "message": f"An unexpected error occurred: {e}"}), 500
 
 
-# Point d'entrée pour exécuter l'application
+# Entry point to run the application
 if __name__ == '__main__':
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     CADDY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)

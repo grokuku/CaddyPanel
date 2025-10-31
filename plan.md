@@ -1,115 +1,115 @@
-# Plan de Transformation et Évolution de CaddyPanel
+# CaddyPanel Transformation and Evolution Plan
 
-Ce document décrit le plan de transformation du projet CaddyPanel en une application conteneurisée intégrant Caddy2 et son interface de configuration Flask, ainsi que les évolutions futures envisagées.
+This document describes the plan to transform the CaddyPanel project into a containerized application integrating Caddy2 and its Flask configuration interface, as well as planned future developments.
 
-## Objectif Principal de la Transformation Initiale
+## Main Objective of the Initial Transformation
 
-Transformer le projet existant en un **conteneur Docker unique** qui inclut :
-1.  Le serveur web **Caddy 2**.
-2.  L'**interface web de configuration Flask** (CaddyPanel).
-Le but est de simplifier le déploiement, la gestion et l'utilisation de Caddy avec une interface graphique dédiée.
+Transform the existing project into a **single Docker container** that includes:
+1.  The **Caddy 2** web server.
+2.  The **Flask web configuration interface** (CaddyPanel).
+The goal is to simplify the deployment, management, and use of Caddy with a dedicated graphical interface.
 
-## Phase 1: Conteneurisation et Intégration Caddy/Flask (Réalisée)
+## Phase 1: Containerization and Caddy/Flask Integration (Completed)
 
-Cette phase se concentre sur la mise en place de l'environnement conteneurisé et l'interaction de base entre l'UI Flask et Caddy.
+This phase focuses on setting up the containerized environment and the basic interaction between the Flask UI and Caddy.
 
-### 1. Choix Techniques et Architecture Docker
+### 1. Technical Choices and Docker Architecture
 
-*   **Image de base Docker :** `python:3.10-slim-bullseye` (pour l'application Flask et les dépendances système).
-*   **Installation de Caddy2 :** Téléchargement du binaire officiel Caddy (version spécifiée par `CADDY_VERSION` dans le `Dockerfile`) depuis GitHub releases. Gestion de l'architecture (amd64, arm64) via `dpkg --print-architecture`.
-*   **Gestion des Processus :** `supervisord` est utilisé pour gérer les processus Caddy et Flask à l'intérieur du conteneur.
-    *   `supervisord` s'exécute en `root` pour pouvoir gérer des processus nécessitant des privilèges (comme Caddy pour les ports < 1024).
-    *   Caddy est lancé par `supervisord` en tant que `root` pour se lier aux ports 80/443.
-    *   L'application Flask est lancée par `supervisord` en tant qu'utilisateur non privilégié `appuser`.
-*   **Communication UI Flask <-> Caddy :**
-    *   **Fichier Caddyfile :** L'UI Flask lit et écrit le Caddyfile situé à un chemin fixe dans le conteneur (`/etc/caddy/Caddyfile`, configurable via `ENV CADDY_CONFIG_FILE`).
-    *   **Rechargement de Caddy :** L'UI Flask déclenche un rechargement via une commande système (`caddy reload --config ...`), exécutée par le backend Flask. La commande est configurable via les préférences.
-*   **Persistance des Données (Volumes Docker) :**
-    *   **Caddyfile :** Monté sur `/etc/caddy/` (chemin configurable via `CADDY_CONFIG_DIR`).
-    *   **Données Caddy (certificats ACME, etc.) :** Monté sur `/data/caddy` (chemin configurable via `CADDY_DATA_DIR`).
-    *   **Données de l'UI (preferences.json, users.json) :** Monté sur `/app_data` (chemin configurable via `APP_DATA_DIR`).
-*   **Initialisation :** Un script `entrypoint.sh` (exécuté en `root`) initialise les fichiers de configuration (`Caddyfile`, `preferences.json`, `users.json`) dans les volumes au premier démarrage s'ils sont absents ou vides. Il corrige également les chemins dans `preferences.json` pour correspondre à l'environnement du conteneur et s'assure des bonnes permissions pour `appuser` sur les volumes.
-*   **Ports Exposés :** `80` (HTTP), `443` (HTTPS), et `5000` (Flask UI, configurable via `FLASK_PORT`). Le port de l'API admin de Caddy (`2019`) n'est pas exposé par défaut.
-*   **Utilisateur Non-Root :** Un utilisateur `appuser` (UID/GID 1000) est créé et utilisé pour exécuter l'application Flask. Les permissions des fichiers/dossiers sont gérées en conséquence.
+*   **Docker base image:** `python:3.10-slim-bullseye` (for the Flask application and system dependencies).
+*   **Caddy2 Installation:** Download the official Caddy binary (version specified by `CADDY_VERSION` in the `Dockerfile`) from GitHub releases. Architecture management (amd64, arm64) via `dpkg --print-architecture`.
+*   **Process Management:** `supervisord` is used to manage the Caddy and Flask processes inside the container.
+    *   `supervisord` runs as `root` to be able to manage processes requiring privileges (like Caddy for ports < 1024).
+    *   Caddy is launched by `supervisord` as `root` to bind to ports 80/443.
+    *   The Flask application is launched by `supervisord` as a non-privileged user `appuser`.
+*   **Flask UI <-> Caddy Communication:**
+    *   **Caddyfile file:** The Flask UI reads and writes the Caddyfile located at a fixed path in the container (`/etc/caddy/Caddyfile`, configurable via `ENV CADDY_CONFIG_FILE`).
+    *   **Caddy Reload:** The Flask UI triggers a reload via a system command (`caddy reload --config ...`), executed by the Flask backend. The command is configurable via preferences.
+*   **Data Persistence (Docker Volumes):**
+    *   **Caddyfile:** Mounted on `/etc/caddy/` (path configurable via `CADDY_CONFIG_DIR`).
+    *   **Caddy Data (ACME certificates, etc.):** Mounted on `/data/caddy` (path configurable via `CADDY_DATA_DIR`).
+    *   **UI Data (preferences.json, users.json):** Mounted on `/app_data` (path configurable via `APP_DATA_DIR`).
+*   **Initialization:** An `entrypoint.sh` script (executed as `root`) initializes the configuration files (`Caddyfile`, `preferences.json`, `users.json`) in the volumes on the first start if they are absent or empty. It also corrects the paths in `preferences.json` to match the container environment and ensures the correct permissions for `appuser` on the volumes.
+*   **Exposed Ports:** `80` (HTTP), `443` (HTTPS), and `5000` (Flask UI, configurable via `FLASK_PORT`). The Caddy admin API port (`2019`) is not exposed by default.
+*   **Non-Root User:** A `appuser` user (UID/GID 1000) is created and used to run the Flask application. File/folder permissions are managed accordingly.
 
-### 2. Modifications de l'Application Flask (`app.py`)
+### 2. Flask Application Modifications (`app.py`)
 
-*   **Chemins des Fichiers :** Les constantes pour `PREFERENCES_FILE`, `USERS_FILE` et la gestion du `caddyfilePath` utilisent désormais des variables d'environnement (`APP_DATA_DIR`, `CADDY_CONFIG_FILE`) pour pointer vers les emplacements dans les volumes Docker.
-*   **Préférences :**
-    *   `caddyfilePath` dans les préférences est désormais informatif et forcé au chemin fixe du conteneur lors du chargement/sauvegarde.
-    *   `caddyReloadCmd` est initialisé avec une commande fonctionnelle pour l'environnement conteneurisé.
-*   **API Modifiées/Ajoutées :**
-    *   `/` (index) : Charge le Caddyfile depuis le chemin fixe `CADDY_CONFIG_FILE`.
-    *   `/api/preferences` (POST) : Ignore la valeur `caddyfilePath` envoyée par le client et force le chemin interne.
-    *   `/api/caddyfile/save` (POST) : Nouvelle route pour écrire le contenu du Caddyfile fourni par le client au chemin `CADDY_CONFIG_FILE`.
-    *   `/api/caddy/reload` (POST) : Nouvelle route pour exécuter la commande de rechargement de Caddy (définie dans les préférences).
-*   **Initialisation (Développement Local) :** Le bloc `if __name__ == '__main__':` a été adapté pour faciliter le développement local hors Docker, mais l'initialisation principale des fichiers est déléguée à `entrypoint.sh` dans Docker.
+*   **File Paths:** The constants for `PREFERENCES_FILE`, `USERS_FILE` and the management of `caddyfilePath` now use environment variables (`APP_DATA_DIR`, `CADDY_CONFIG_FILE`) to point to the locations in the Docker volumes.
+*   **Preferences:**
+    *   `caddyfilePath` in the preferences is now informational and forced to the fixed path of the container when loading/saving.
+    *   `caddyReloadCmd` is initialized with a functional command for the containerized environment.
+*   **Modified/Added APIs:**
+    *   `/` (index): Loads the Caddyfile from the fixed path `CADDY_CONFIG_FILE`.
+    *   `/api/preferences` (POST): Ignores the `caddyfilePath` value sent by the client and forces the internal path.
+    *   `/api/caddyfile/save` (POST): New route to write the content of the Caddyfile provided by the client to the path `CADDY_CONFIG_FILE`.
+    *   `/api/caddy/reload` (POST): New route to execute the Caddy reload command (defined in the preferences).
+*   **Initialization (Local Development):** The `if __name__ == '__main__':` block has been adapted to facilitate local development outside of Docker, but the main initialization of the files is delegated to `entrypoint.sh` in Docker.
 
-### 3. Modifications du Frontend (`static/script.js`)
+### 3. Frontend Modifications (`static/script.js`)
 
-*   **Interaction avec les Nouvelles API :**
-    *   Un bouton "Save Caddyfile & Reload Caddy" a été ajouté. Il appelle séquentiellement `/api/caddyfile/save` puis `/api/caddy/reload`.
-    *   Des messages de statut sont affichés à l'utilisateur pour ces opérations.
-*   **Préférences :**
-    *   Le champ `caddyfilePath` dans l'onglet Préférences est maintenant `readonly` et affiche le chemin fixe du conteneur. Sa note explicative a été mise à jour.
-    *   Le "File Browser" a une utilité réduite pour la sélection du Caddyfile principal ; son usage est clarifié.
-*   **Parsing du Caddyfile :** Ajustements mineurs au regex de parsing pour une meilleure robustesse (cela reste une opération complexe et "best-effort" côté client).
+*   **Interaction with New APIs:**
+    *   A "Save Caddyfile & Reload Caddy" button has been added. It sequentially calls `/api/caddyfile/save` then `/api/caddy/reload`.
+    *   Status messages are displayed to the user for these operations.
+*   **Preferences:**
+    *   The `caddyfilePath` field in the Preferences tab is now `readonly` and displays the fixed path of the container. Its explanatory note has been updated.
+    *   The "File Browser" has a reduced utility for selecting the main Caddyfile; its use is clarified.
+*   **Caddyfile Parsing:** Minor adjustments to the parsing regex for better robustness (this remains a complex and "best-effort" operation on the client side).
 
-### 4. Fichiers Docker
+### 4. Docker Files
 
-*   **`Dockerfile` :**
-    *   Définit l'image, installe Python, Caddy, Supervisor.
-    *   Configure les utilisateurs, les variables d'environnement, les répertoires, les volumes.
-    *   Copie le code de l'application et les scripts de configuration Docker.
-    *   Définit `ENTRYPOINT` et `CMD`.
-*   **`CaddyPanel/docker/supervisord.conf` :** (Assumant que le dossier CaddyPanel contient l'application)
-    *   Configure `supervisord` pour lancer et gérer les processus `caddy` (en `root`) et `flaskapp` (en `appuser`).
-    *   Passe les variables d'environnement nécessaires à `flaskapp`.
-*   **`CaddyPanel/docker/entrypoint.sh` :** (Assumant que le dossier CaddyPanel contient l'application)
-    *   Script d'initialisation exécuté au démarrage du conteneur.
-    *   Crée les fichiers de configuration par défaut dans les volumes si nécessaire.
-    *   Met à jour les chemins dans `preferences.json`.
-    *   Gère les permissions des fichiers/dossiers dans les volumes.
-*   **`.dockerignore` :**
-    *   Spécifie les fichiers et dossiers à exclure du contexte de build Docker pour optimiser la taille de l'image et éviter les conflits.
+*   **`Dockerfile`:**
+    *   Defines the image, installs Python, Caddy, Supervisor.
+    *   Configures users, environment variables, directories, volumes.
+    *   Copies the application code and Docker configuration scripts.
+    *   Defines `ENTRYPOINT` and `CMD`.
+*   **`CaddyPanel/docker/supervisord.conf`:** (Assuming the CaddyPanel folder contains the application)
+    *   Configures `supervisord` to launch and manage the `caddy` (as `root`) and `flaskapp` (as `appuser`) processes.
+    *   Passes the necessary environment variables to `flaskapp`.
+*   **`CaddyPanel/docker/entrypoint.sh`:** (Assuming the CaddyPanel folder contains the application)
+    *   Initialization script executed at container startup.
+    *   Creates the default configuration files in the volumes if necessary.
+    *   Updates the paths in `preferences.json`.
+    *   Manages the permissions of files/folders in the volumes.
+*   **`.dockerignore`:**
+    *   Specifies the files and folders to exclude from the Docker build context to optimize the image size and avoid conflicts.
 
-### 5. Instructions de Build et d'Exécution
+### 5. Build and Execution Instructions
 
-1.  **Prérequis :** Docker (et Docker Buildx pour multi-architecture) installé.
-2.  **Structure des Dossiers :**
+1.  **Prerequisites:** Docker (and Docker Buildx for multi-architecture) installed.
+2.  **Folder Structure:**
     ```
-    ProjetComplet/
-    ├── CaddyPanel/  (Contient les fichiers de l'application: app.py, static/, templates/, docker/, etc.)
+    CompleteProject/
+    ├── CaddyPanel/  (Contains the application files: app.py, static/, templates/, docker/, etc.)
     │   ├── caddyfile/
-    │   │   └── Caddyfile  (Exemple initial)
+    │   │   └── Caddyfile  (Initial example)
     │   ├── docker/
     │   │   ├── entrypoint.sh
     │   │   └── supervisord.conf
     │   ├── static/
     │   ├── templates/
     │   ├── app.py
-    │   ├── preferences.json (Exemple initial)
+    │   ├── preferences.json (Initial example)
     │   ├── requirements.txt
-    │   └── users.json (Exemple initial)
+    │   └── users.json (Initial example)
     ├── Dockerfile
     └── .dockerignore
     ```
-3.  **Construire l'image** (depuis `ProjetComplet/`) :
+3.  **Build the image** (from `CompleteProject/`):
     ```bash
     docker build -t caddypanel:latest .
     ```
-    Pour multi-architecture (ex: `linux/arm64` ou `linux/amd64`) :
+    For multi-architecture (e.g., `linux/arm64` or `linux/amd64`):
     ```bash
     docker buildx build --platform linux/amd64 -t caddypanel:latest --load .
     ```
-4.  **Préparer les répertoires hôtes pour les volumes** (une seule fois, depuis `ProjetComplet/`) :
+4.  **Prepare the host directories for the volumes** (once, from `CompleteProject/`):
     ```bash
     mkdir -p ./caddy_config_on_host
     mkdir -p ./caddy_data_on_host
     mkdir -p ./app_data_on_host
     ```
-5.  **Exécuter le conteneur** (depuis `ProjetComplet/`) :
-    Utilisez `docker-compose up -d` avec le `docker-compose.yml` mis à jour, ou la commande `docker run` suivante :
+5.  **Run the container** (from `CompleteProject/`):
+    Use `docker-compose up -d` with the updated `docker-compose.yml`, or the following `docker run` command:
     ```bash
     docker run -d \
         -p 80:80 \
@@ -118,50 +118,50 @@ Cette phase se concentre sur la mise en place de l'environnement conteneurisé e
         -v $(pwd)/caddy_config_on_host:/etc/caddy \
         -v $(pwd)/caddy_data_on_host:/data/caddy \
         -v $(pwd)/app_data_on_host:/app_data \
-        -e FLASK_SECRET_KEY="votre_cle_secrete_tres_forte_ici_!!!changez_moi!!!" \
+        -e FLASK_SECRET_KEY="your_very_strong_secret_key_here_!!!change_me!!!" \
         -e TZ="Europe/Paris" \
         --name caddypanel-instance \
         caddypanel:latest
     ```
-    **Note :** Remplacer `"votre_cle_secrete_tres_forte_ici_!!!changez_moi!!!"` par une clé secrète réelle et robuste.
+    **Note:** Replace "your_very_strong_secret_key_here_!!!change_me!!!" with a real and robust secret key.
 
-## Phase 2: Améliorations Futures (Planification)
+## Phase 2: Future Improvements (Planning)
 
-### 1. Intégration de Statistiques et Monitoring
+### 1. Integration of Statistics and Monitoring
 
-*   **Objectif :** Fournir des statistiques sur les accès, les erreurs, et d'autres informations pertinentes pour chaque site géré par Caddy.
-*   **Source des Données :** Principalement les logs d'accès de Caddy (configurés en format JSON).
-*   **Architecture Envisagée :**
-    1.  **Collecte :** Caddy logue vers `stdout` (capturé par Docker) ou un fichier dans un volume.
-    2.  **Parsing :** Un processus backend (initialement avec Flask, potentiellement avec Celery/RQ) parse les logs.
-    3.  **Stockage :** Une base de données (SQLite pour commencer, puis PostgreSQL ou InfluxDB/Prometheus pour des besoins plus avancés) stockera les données parsées ou agrégées.
-    4.  **API :** Le backend exposera de nouvelles API pour récupérer les statistiques.
-    5.  **Visualisation :** L'UI affichera les statistiques via des tableaux et des graphiques (ex: Chart.js).
-*   **Impact sur le Framework Backend :**
-    *   **Flask :** Faisable, mais pourrait nécessiter l'intégration de plusieurs extensions (SQLAlchemy, Celery).
-    *   **FastAPI :** Pourrait être un meilleur choix à long terme en raison de ses performances asynchrones (utiles pour le traitement des logs I/O intensif) et de sa forte orientation API avec validation de données (Pydantic).
-    *   **Django :** Son ORM et son panneau d'admin pourraient être utiles, mais peut-être surdimensionné.
-*   **Stratégie d'Implémentation :**
-    1.  Mener à bien la Phase 1 (conteneurisation avec Flask).
-    2.  Prototyper la collecte/stockage/API des statistiques de base avec Flask.
-    3.  Réévaluer si les limitations de Flask justifient une migration vers FastAPI (ou autre) pour cette fonctionnalité.
+*   **Objective:** Provide statistics on access, errors, and other relevant information for each site managed by Caddy.
+*   **Data Source:** Mainly Caddy's access logs (configured in JSON format).
+*   **Envisioned Architecture:**
+    1.  **Collection:** Caddy logs to `stdout` (captured by Docker) or a file in a volume.
+    2.  **Parsing:** A backend process (initially with Flask, potentially with Celery/RQ) parses the logs.
+    3.  **Storage:** A database (SQLite to start, then PostgreSQL or InfluxDB/Prometheus for more advanced needs) will store the parsed or aggregated data.
+    4.  **API:** The backend will expose new APIs to retrieve the statistics.
+    5.  **Visualization:** The UI will display the statistics via tables and graphs (e.g., Chart.js).
+*   **Impact on the Backend Framework:**
+    *   **Flask:** Feasible, but may require the integration of several extensions (SQLAlchemy, Celery).
+    *   **FastAPI:** Could be a better long-term choice due to its asynchronous performance (useful for I/O-intensive log processing) and its strong API orientation with data validation (Pydantic).
+    *   **Django:** Its ORM and admin panel could be useful, but perhaps oversized.
+*   **Implementation Strategy:**
+    1.  Successfully complete Phase 1 (containerization with Flask).
+    2.  Prototype the collection/storage/API of basic statistics with Flask.
+    3.  Re-evaluate if the limitations of Flask justify a migration to FastAPI (or other) for this functionality.
 
-### 2. Améliorations de l'Interface Utilisateur et de l'UX
+### 2. User Interface and UX Improvements
 
-*   Refonte potentielle de l'UI pour une meilleure ergonomie.
-*   Amélioration du parsing/génération du Caddyfile (potentiellement déplacer une partie de la logique de parsing complexe côté backend pour plus de robustesse ou utiliser une librairie dédiée si elle existe).
-*   Support pour des directives Caddy plus avancées via l'UI.
-*   Gestion plus fine des utilisateurs (rôles, permissions) si nécessaire.
+*   Potential redesign of the UI for better usability.
+*   Improvement of Caddyfile parsing/generation (potentially moving some of the complex parsing logic to the backend for more robustness or using a dedicated library if one exists).
+*   Support for more advanced Caddy directives via the UI.
+*   Finer-grained user management (roles, permissions) if necessary.
 
-### 3. Sécurité et Robustesse
+### 3. Security and Robustness
 
-*   Exposition de l'API admin de Caddy de manière sécurisée si une interaction plus directe est nécessaire (actuellement, le rechargement se fait par commande).
-*   Validation plus poussée des entrées utilisateur.
-*   Revue de sécurité régulière.
+*   Secure exposure of the Caddy admin API if more direct interaction is needed (currently, reloading is done by command).
+*   More advanced validation of user input.
+*   Regular security review.
 
-## Décision sur le Framework Backend (Flask)
+## Decision on the Backend Framework (Flask)
 
-*   **Pour la Phase 1 et le début de la Phase 2 (statistiques de base) :** Rester sur **Flask** est le choix pragmatique. L'application existante est solide, et Flask est suffisant pour les fonctionnalités actuelles et les premières étapes d'intégration des statistiques.
-*   **Réévaluation Future :** La pertinence de Flask sera réévaluée si les fonctionnalités de statistiques deviennent très complexes, nécessitent des performances asynchrones élevées, ou si la gestion des API devient un point central justifiant les avantages de FastAPI.
+*   **For Phase 1 and the beginning of Phase 2 (basic statistics):** Sticking with **Flask** is the pragmatic choice. The existing application is solid, and Flask is sufficient for current features and the first steps of integrating statistics.
+*   **Future Re-evaluation:** The relevance of Flask will be re-evaluated if the statistics features become very complex, require high asynchronous performance, or if API management becomes a central point justifying the advantages of FastAPI.
 
-Ce plan servira de guide pour le développement et l'évolution du projet CaddyPanel.
+This plan will serve as a guide for the development and evolution of the CaddyPanel project.

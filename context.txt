@@ -1,20 +1,20 @@
-# Contexte du Projet CaddyPanel (pour LLM)
+# CaddyPanel Project Context (for LLM)
 
-Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour humain. Transmettre toutes les infos clés, sans tokens gaspillés en mise en page.
-
-======================================================================
-1. RÈGLES OPÉRATIONNELLES
-======================================================================
-
-- Fichier Manquant: Le signaler, demander son contenu, ne jamais l'inventer.
-- Modification Fichier: Pour un patch simple, fournir une commande `sed` en une ligne. Si complexe ou risqué, fournir le contenu complet du fichier. Ne pas utiliser d'autres outils (`awk`, `patch`).
-- Flux de Travail: Proposer une modification, puis attendre l'accord explicite de l'utilisateur avant de continuer.
-- Périmètre: Ne modifier que ce qui est strictement nécessaire à la tâche demandée. Pas de zèle.
-- Vérification: Après chaque modification, suggérer des points de contrôle ou des tests simples.
-
+Entry point for work session. Objective: conciseness for AI, not for humans. Transmit all key information, without wasted tokens on formatting.
 
 ======================================================================
-2. ARBORESCENCE DU PROJET
+1. OPERATIONAL RULES
+======================================================================
+
+- Missing File: Report it, ask for its content, never invent it.
+- File Modification: For a simple patch, provide a one-line `sed` command. If complex or risky, provide the full content of the file. Do not use other tools (`awk`, `patch`).
+- Workflow: Propose a modification, then wait for the user's explicit agreement before continuing.
+- Scope: Only modify what is strictly necessary for the requested task. No zeal.
+- Verification: After each modification, suggest simple checkpoints or tests.
+
+
+======================================================================
+2. PROJECT TREE
 ======================================================================
 
 📁 .github/
@@ -45,55 +45,56 @@ Point d'entrée pour session de travail. Objectif: concision pour IA, pas pour h
 
 
 ======================================================================
-3. NOTES SUR LES FICHIERS
+3. NOTES ON FILES
 ======================================================================
 
-- app.py: Backend Flask. Sert UI/API. Gère users/prefs/Caddyfile. Déclenche le reload de Caddy.
-- Dockerfile: Build multi-stage de l'image Docker. Récupère Caddy, installe Python/dépendances/app.
-- docker-compose.yml: Orchestration du déploiement. Définit service, volumes, lit le .env.
-- docker/entrypoint.sh: Script d'init au démarrage conteneur. Crée configs par défaut, gère permissions.
-- docker/supervisord.conf: Config Supervisor. Gère les processus `caddy` (root) et `flaskapp` (user). Redirige logs.
-- templates/: Templates HTML (Jinja2) pour Flask. (index, stats, login, setup).
-- static/: Fichiers statiques. `script.js` (logique UI, API, parsing Caddyfile client-side), `style.css` (thèmes).
-- caddyfile/Caddyfile: Caddyfile d'exemple pour l'initialisation.
-- requirements.txt: Dépendances Python (Flask).
-- .env: Fichier d'exemple pour variables d'environnement (FLASK_SECRET_KEY, TZ).
-- .dockerignore: Exclut fichiers inutiles du build Docker.
-- README.md: Instructions de build et d'exécution.
-- context.txt: Ce fichier. Contexte pour le LLM.
-- .github/workflows/docker-publish.yml: Workflow GitHub Actions pour build et push l'image Docker multi-arch sur Docker Hub.
+- app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
+- Dockerfile: Multi-stage build of the Docker image. Retrieves Caddy, installs Python/dependencies/app.
+- docker-compose.yml: Deployment orchestration. Defines service, volumes, reads the .env.
+- docker/entrypoint.sh: Init script at container startup. Creates default configs, manages permissions.
+- docker/supervisord.conf: Supervisor config. Manages `caddy` (root) and `flaskapp` (user) processes. Redirects logs.
+- templates/: HTML templates (Jinja2) for Flask. (index, stats, login, setup).
+- static/: Static files. `script.js` (UI logic, API, client-side Caddyfile parsing), `style.css` (themes).
+- caddyfile/Caddyfile: Example Caddyfile for initialization.
+- requirements.txt: Python dependencies (Flask).
+- .env: Example file for environment variables (FLASK_SECRET_KEY, TZ).
+- .dockerignore: Excludes unnecessary files from the Docker build.
+- README.md: Build and execution instructions.
+- context.txt: This file. Context for the LLM.
+- .github/workflows/docker-publish.yml: GitHub Actions workflow to build and push the multi-arch Docker image to Docker Hub.
 
 
 ======================================================================
-4. ÉTAT DU PROJET
+4. PROJECT STATUS
 ======================================================================
 
 ACTIVE_BUGS:
-- Stats/Logs: La page de statistiques ne s'affiche pas correctement ou n'affiche aucune donnée, suggérant un problème avec la collecte ou le traitement des logs (`read_caddy_logs` dans `app.py` ou la configuration du logging de Caddy).
+- Stats/Logs: The statistics page does not display correctly or shows no data, suggesting a problem with the collection or processing of logs (`read_caddy_logs` in `app.py` or Caddy's logging configuration).
 
 ROADMAP:
-- Mise en place du build automatisé et de la publication sur Docker Hub via GitHub Actions.
+- Set up automated build and publication to Docker Hub via GitHub Actions.
 
 IN_PROGRESS:
-- Aucun pour le moment.
+- None at the moment.
 
 COMPLETED_FEATURES:
-- Architecture conteneurisée (Docker/Compose).
-- Gestion des processus (Supervisor).
-- Initialisation automatique (entrypoint.sh).
-- Persistance des données (volumes).
-- Authentification utilisateur.
-- UI de gestion du Caddyfile (Configurator + Raw Editor).
-- Sauvegarde et rechargement automatiques de Caddy.
-- UI de gestion des préférences.
-- Page de statistiques de base.
-- Assistant de configuration des logs Caddy.
-- Build Docker multi-architecture.
-- BUGFIX: Correction de l'état de la case "Skip TLS Verify" dans l'UI.
+- Translation of French comments to English.
+- Containerized architecture (Docker/Compose).
+- Process management (Supervisor).
+- Automatic initialization (entrypoint.sh).
+- Data persistence (volumes).
+- User authentication.
+- Caddyfile management UI (Configurator + Raw Editor).
+- Automatic saving and reloading of Caddy.
+- Preferences management UI.
+- Basic statistics page.
+- Caddy log configuration wizard.
+- Multi-architecture Docker build.
+- BUGFIX: Correction of the state of the "Skip TLS Verify" checkbox in the UI.
 
 ======================================================================
-5. RÈGLES DE MAINTENANCE DE CE FICHIER
+5. MAINTENANCE RULES FOR THIS FILE
 ======================================================================
 
-- Mettre à jour ce fichier à chaque modification (feature, bugfix).
-- À la fin de chaque session, fournir le contenu complet et à jour de ce fichier.
+- Update this file with each modification (feature, bugfix).
+- At the end of each session, provide the full and updated content of this file.

@@ -1,5 +1,5 @@
-# C2RPM/.dockerignore (ou plutôt à la racine du projet, donc .dockerignore)
-# Ce fichier doit être à la racine du contexte de build (le dossier où vous lancez docker build)
+# C2RPM/.dockerignore (or rather at the root of the project, so .dockerignore)
+# This file must be at the root of the build context (the folder where you run docker build)
 
 # Git
 .git
@@ -14,13 +14,13 @@ __pycache__/
 venv/
 .venv/
 env/
-.env # Ne pas inclure les fichiers .env locaux dans l'image
+.env # Do not include local .env files in the image
 pip-wheel-metadata/
 pip-selfcheck.json
 
 # Docker
-Dockerfile # Si vous avez des Dockerfile de test ou autres
-docker-compose.yml # Idem
+Dockerfile # If you have test Dockerfiles or others
+docker-compose.yml # Same
 caddy_config_on_host/
 caddy_data_on_host/
 app_data_on_host/
@@ -34,27 +34,27 @@ app_data_on_host/
 .DS_Store
 Thumbs.db
 
-# Documentation inutile dans l'image (si plan.md est dans C2RPM)
-# Si plan.md est à la racine du projet, et que C2RPM est un sous-dossier,
-# et que le contexte de build est la racine, alors C2RPM/plan.md sera copié
-# par COPY C2RPM/ ./ dans /app. Si on ne veut pas le plan.md dans l'image :
+# Unnecessary documentation in the image (if plan.md is in C2RPM)
+# If plan.md is at the root of the project, and C2RPM is a sub-folder,
+# and the build context is the root, then C2RPM/plan.md will be copied
+# by COPY C2RPM/ ./ in /app. If we do not want plan.md in the image:
 # C2RPM/plan.md
-# Cependant, le plan.md fourni dans la liste initiale est dans C2RPM/plan.md
-# et le Dockerfile est à la racine, donc il sera copié sous C2RPM/plan.md DANS l'image.
-# Pour l'exclure:
+# However, the plan.md provided in the initial list is in C2RPM/plan.md
+# and the Dockerfile is at the root, so it will be copied under C2RPM/plan.md IN the image.
+# To exclude it:
 C2RPM/plan.md
 
 
-# Fichiers de données exemple qui sont copiés par l'entrypoint depuis l'image
-# mais que nous ne voulons peut-être pas directement dans le WORKDIR si d'autres
-# copies sont plus spécifiques. Actuellement, ils sont nécessaires dans /app
-# pour que l'entrypoint.sh fonctionne (ex: DEFAULT_PREFS_PATH="${FLASK_APP_DIR}/preferences.json")
-# Donc ne pas les ignorer ici si la stratégie de copie reste la même.
+# Example data files that are copied by the entrypoint from the image
+# but that we may not want directly in the WORKDIR if others
+# copies are more specific. Currently, they are needed in /app
+# for entrypoint.sh to work (eg: DEFAULT_PREFS_PATH="${FLASK_APP_DIR}/preferences.json")
+# So do not ignore them here if the copy strategy remains the same.
 # C2RPM/preferences.json
 # C2RPM/users.json
 # C2RPM/caddyfile/Caddyfile
 
-# Si vous avez des tests que vous ne voulez pas dans l'image de production
+# If you have tests that you do not want in the production image
 # tests/
 
 GEMINI.md

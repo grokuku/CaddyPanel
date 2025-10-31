@@ -1,43 +1,43 @@
-# Nom du workflow qui s'affichera dans l'onglet Actions de GitHub
+# Workflow name that will be displayed in the GitHub Actions tab
 name: Docker Publish CI
 
-# Définit les déclencheurs pour ce workflow
+# Defines the triggers for this workflow
 on:
-  # Se déclenche à chaque push sur la branche "main"
+  # Triggers on every push to the "main" branch
   push:
     branches: [ "main" ]
-  # Permet de lancer manuellement ce workflow depuis l'interface GitHub
+  # Allows to manually run this workflow from the GitHub interface
   workflow_dispatch:
 
-# Définit les tâches (jobs) à exécuter
+# Defines the jobs to be executed
 jobs:
   build-and-push-multi-arch:
-    # Utilise la dernière version d'Ubuntu comme environnement d'exécution
+    # Uses the latest version of Ubuntu as the execution environment
     runs-on: ubuntu-latest
 
-    # Séquence des étapes pour ce job
+    # Sequence of steps for this job
     steps:
-    # 1. Récupère le code du dépôt
+    # 1. Retrieves the repository code
     - name: Check out repository code
       uses: actions/checkout@v4
 
-    # 2. Met en place QEMU pour l'émulation multi-architecture
+    # 2. Sets up QEMU for multi-architecture emulation
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    # 3. Met en place Docker Buildx pour permettre les builds multi-architecture
+    # 3. Sets up Docker Buildx to allow multi-architecture builds
     - name: Set up Docker Buildx
-      id: buildx # Ajout d'un ID pour pouvoir y faire référence plus tard
+      id: buildx # Added an ID to be able to refer to it later
       uses: docker/setup-buildx-action@v3
 
-    # 4. Se connecte à Docker Hub en utilisant les secrets configurés
+    # 4. Logs in to Docker Hub using the configured secrets
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # 5. Définit les métadonnées de l'image (tags, etc.)
+    # 5. Defines the image metadata (tags, etc.)
     - name: Docker meta
       id: meta
       uses: docker/metadata-action@v5
@@ -47,17 +47,17 @@ jobs:
           type=ref,event=branch
           type=raw,value=latest,enable={{is_default_branch}}
 
-    # 6. Construit et pousse l'image Docker (avec cache)
+    # 6. Builds and pushes the Docker image (with cache)
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        # Construit l'image pour les architectures amd64 (standard) et arm64 (Raspberry Pi, etc.)
+        # Builds the image for amd64 (standard) and arm64 (Raspberry Pi, etc.) architectures
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        # Ajout du cache pour accélérer les builds futurs
+        # Added cache to speed up future builds
         cache-from: type=gha
         cache-to: type=gha,mode=max

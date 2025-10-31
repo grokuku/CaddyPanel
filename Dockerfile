@@ -1,17 +1,17 @@
-# --- Stage 1: Builder pour Caddy ---
+# --- Stage 1: Caddy Builder ---
 FROM python:3.10-slim-bullseye AS caddy_builder
 
 ARG CADDY_VERSION=2.10.0
-# TARGETARCH est fourni automatiquement par Docker Buildx (ex: amd64, arm64)
+# TARGETARCH is automatically provided by Docker Buildx (e.g., amd64, arm64)
 ARG TARGETARCH
 
-# Installer curl pour télécharger Caddy
+# Install curl to download Caddy
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Télécharger et extraire Caddy
+# Download and extract Caddy
 RUN \
     build_arch="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     echo "Building for architecture: ${build_arch}" && \
@@ -31,14 +31,14 @@ RUN \
     chmod +x /usr/local/bin/caddy
 
 
-# --- Stage 2: Application finale ---
+# --- Stage 2: Final Application ---
 FROM python:3.10-slim-bullseye
 
-# Arguments pour la création de l'utilisateur et du groupe
+# Arguments for user and group creation
 ARG APP_USER_ID=1000
 ARG APP_GROUP_ID=1000
 
-# Variables d'environnement
+# Environment variables
 ENV CADDY_CONFIG_DIR=/etc/caddy
 ENV CADDY_CONFIG_FILE=${CADDY_CONFIG_DIR}/Caddyfile
 ENV CADDY_DATA_DIR=/data/caddy
@@ -49,41 +49,41 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=off
 ENV PIP_DISABLE_PIP_VERSION_CHECK=on
 
-# Installer les dépendances système
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         supervisor \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Créer le groupe et l'utilisateur
+# Create group and user
 RUN groupadd --gid ${APP_GROUP_ID} appgroup && \
     useradd --uid ${APP_USER_ID} --gid ${APP_GROUP_ID} --create-home --shell /bin/bash appuser
 
-# Copier le binaire Caddy depuis le stage builder
+# Copy Caddy binary from the builder stage
 COPY --from=caddy_builder /usr/local/bin/caddy /usr/bin/caddy
 
-# Définir le répertoire de travail
+# Set the working directory
 WORKDIR ${FLASK_APP_DIR}
 
-# Copier requirements.txt et installer les dépendances Python
-# Ces fichiers sont maintenant à la racine du contexte de build (qui est C2RPM/)
+# Copy requirements.txt and install Python dependencies
+# These files are now at the root of the build context (which is C2RPM/)
 COPY requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 
-# Copier le reste de l'application dans ${FLASK_APP_DIR}
-# Le '.' signifie la racine du contexte de build (C2RPM/)
-# Cela copiera app.py, static/, templates/, docker/, caddyfile/, etc. dans /app
-COPY . ./
+# Copy the rest of the application into ${FLASK_APP_DIR}
+# The '.' means the root of the build context (C2RPM/)
+# This will copy app.py, static/, templates/, docker/, caddyfile/, etc. into /app
+COPY . ./ 
 
-# Copier les configurations de Docker aux emplacements corrects
-# Les fichiers sources sont maintenant relatifs au contexte de build (C2RPM/)
-# donc docker/supervisord.conf fait référence à C2RPM/docker/supervisord.conf
+# Copy Docker configurations to the correct locations
+# The source files are now relative to the build context (C2RPM/)
+# so docker/supervisord.conf refers to C2RPM/docker/supervisord.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Créer le répertoire de log pour supervisor
+# Create the log directory for supervisor
 RUN mkdir -p /var/log/supervisor && \
     chown -R appuser:appgroup /var/log/supervisor
 

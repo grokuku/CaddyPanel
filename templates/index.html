@@ -8,7 +8,7 @@
     <script id="initial-data" type="application/json">
         {{ {"initial_caddyfile_content": initial_caddyfile_content}|tojson|safe }}
     </script>
-    <!-- Style pour cacher les messages flash initiaux s'ils sont transformés en toasts -->
+    <!-- Style to hide initial flash messages if they are transformed into toasts -->
     <style>
         ul.flash-messages-to-toast { display: none; }
     </style>
@@ -32,7 +32,7 @@
         {% endif %}
     {% endwith %}
 
-    <div id="toast-container"></div> <!-- Conteneur pour les toasts -->
+    <div id="toast-container"></div> <!-- Container for toasts -->
 
     <div class="tab-container">
         <div class="tab-buttons">

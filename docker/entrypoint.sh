@@ -3,53 +3,53 @@ set -e # Exit immediately if a command exits with a non-zero status.
 
 echo ">>> Running entrypoint.sh as $(whoami)"
 
-# Utiliser les variables d'environnement définies dans le Dockerfile
-# APP_DATA_DIR, CADDY_CONFIG_FILE, FLASK_APP_DIR sont déjà des variables d'env.
+# Use the environment variables defined in the Dockerfile
+# APP_DATA_DIR, CADDY_CONFIG_FILE, FLASK_APP_DIR are already env variables.
 
-# Chemins des fichiers sources par défaut DANS L'IMAGE pour l'initialisation
+# Paths of the default source files IN THE IMAGE for initialization
 DEFAULT_PREFS_PATH="${FLASK_APP_DIR}/preferences.json"
-DEFAULT_USERS_PATH="${FLASK_APP_DIR}/users.json" # Fichier users.json d'exemple (s'il existe)
-DEFAULT_CADDYFILE_EXAMPLE_PATH="${FLASK_APP_DIR}/caddyfile/Caddyfile" # Caddyfile d'exemple fourni
+DEFAULT_USERS_PATH="${FLASK_APP_DIR}/users.json" # Example users.json file (if it exists)
+DEFAULT_CADDYFILE_EXAMPLE_PATH="${FLASK_APP_DIR}/caddyfile/Caddyfile" # Provided example Caddyfile
 
-# Chemins cibles dans les VOLUMES
+# Target paths in the VOLUMES
 TARGET_PREFS_FILE="${APP_DATA_DIR}/preferences.json"
 TARGET_USERS_FILE="${APP_DATA_DIR}/users.json"
-# CADDY_CONFIG_FILE est déjà le chemin cible (ex: /etc/caddy/Caddyfile)
+# CADDY_CONFIG_FILE is already the target path (e.g., /etc/caddy/Caddyfile)
 
-# Créer les répertoires de données si l'utilisateur les a montés et qu'ils n'existent pas encore
-# Docker crée les points de montage, mais pas nécessairement les sous-dossiers si le volume est un dossier existant vide.
+# Create the data directories if the user has mounted them and they do not exist yet
+# Docker creates the mount points, but not necessarily the subfolders if the volume is an empty existing folder.
 mkdir -p "${APP_DATA_DIR}"
-mkdir -p "${CADDY_CONFIG_DIR}" # ex: /etc/caddy
-mkdir -p "${CADDY_DATA_DIR}"   # ex: /data/caddy
+mkdir -p "${CADDY_CONFIG_DIR}" # e.g., /etc/caddy
+mkdir -p "${CADDY_DATA_DIR}"   # e.g., /data/caddy
 
-# Initialiser preferences.json
+# Initialize preferences.json
 if [ ! -f "$TARGET_PREFS_FILE" ]; then
     echo "Initializing preferences.json at $TARGET_PREFS_FILE..."
     if [ -f "$DEFAULT_PREFS_PATH" ]; then
         cp "$DEFAULT_PREFS_PATH" "$TARGET_PREFS_FILE"
-        # S'assurer que caddyfilePath pointe vers le chemin interne au conteneur
-        # Utilisation de sed (attention aux caractères spéciaux dans les chemins)
-        # Remplacer la valeur de caddyfilePath par la variable d'environnement CADDY_CONFIG_FILE
-        # Échapper les slashes pour sed:
+        # Ensure that caddyfilePath points to the internal path in the container
+        # Using sed (beware of special characters in paths)
+        # Replace the value of caddyfilePath with the environment variable CADDY_CONFIG_FILE
+        # Escape the slashes for sed:
         ESCAPED_CADDY_CONFIG_FILE=$(echo "$CADDY_CONFIG_FILE" | sed 's/\//\\\//g')
         sed -i.bak "s|\"caddyfilePath\": \".*\"|\"caddyfilePath\": \"${ESCAPED_CADDY_CONFIG_FILE}\"|g" "$TARGET_PREFS_FILE"
-        # S'assurer que caddyReloadCmd est correct pour l'environnement conteneur
+        # Ensure that caddyReloadCmd is correct for the container environment
         ESCAPED_RELOAD_CMD="caddy reload --config ${CADDY_CONFIG_FILE} --adapter caddyfile"
-        ESCAPED_RELOAD_CMD_SED=$(echo "$ESCAPED_RELOAD_CMD" | sed 's/\//\\\//g') # Échapper pour sed
+        ESCAPED_RELOAD_CMD_SED=$(echo "$ESCAPED_RELOAD_CMD" | sed 's/\//\\\//g') # Escape for sed
         sed -i.bak "s|\"caddyReloadCmd\": \".*\"|\"caddyReloadCmd\": \"${ESCAPED_RELOAD_CMD_SED}\"|g" "$TARGET_PREFS_FILE"
         rm -f "${TARGET_PREFS_FILE}.bak"
         echo "preferences.json initialized and paths updated."
     else
         echo "WARNING: Default preferences.json not found at $DEFAULT_PREFS_PATH. Creating a minimal one."
-        # Créer un fichier de préférences minimal si le fichier par défaut n'est pas trouvé
-        echo "{}" > "$TARGET_PREFS_FILE" # app.py le remplira avec les défauts au premier chargement
+        # Create a minimal preferences file if the default file is not found
+        echo "{}" > "$TARGET_PREFS_FILE" # app.py will fill it with defaults on first load
     fi
 else
     echo "preferences.json already exists at $TARGET_PREFS_FILE."
-    # Optionnel: Vérifier et mettre à jour caddyfilePath et caddyReloadCmd s'ils sont incorrects, même si le fichier existe.
-    # Cela peut être utile si l'utilisateur a monté un ancien preferences.json.
-    # jq serait plus robuste pour cela si disponible:
-    # if command -v jq &> /dev/null; then
+    # Optional: Check and update caddyfilePath and caddyReloadCmd if they are incorrect, even if the file exists.
+    # This can be useful if the user has mounted an old preferences.json.
+    # jq would be more robust for this if available:
+    # if command -v jq &> /dev/null;
     #   jq --arg path "$CADDY_CONFIG_FILE" '.caddyfilePath = $path' "$TARGET_PREFS_FILE" > tmp.$$.json && mv tmp.$$.json "$TARGET_PREFS_FILE"
     #   jq --arg cmd "caddy reload --config $CADDY_CONFIG_FILE --adapter caddyfile" '.caddyReloadCmd = $cmd' "$TARGET_PREFS_FILE" > tmp.$$.json && mv tmp.$$.json "$TARGET_PREFS_FILE"
     # else
@@ -57,67 +57,67 @@ else
     # fi
 fi
 
-# Initialiser users.json (sera vide, le setup s'en chargera, ou copié depuis l'exemple)
+# Initialize users.json (will be empty, the setup will take care of it, or copied from the example)
 if [ ! -f "$TARGET_USERS_FILE" ]; then
     echo "Initializing users.json at $TARGET_USERS_FILE..."
-    if [ -f "$DEFAULT_USERS_PATH" ] && [ "$(jq 'length' "$DEFAULT_USERS_PATH" 2>/dev/null)" != "0" ]; then # Copier si non vide et JSON valide
+    if [ -f "$DEFAULT_USERS_PATH" ] && [ "$(jq 'length' "$DEFAULT_USERS_PATH" 2>/dev/null)" != "0" ]; then # Copy if not empty and valid JSON
         cp "$DEFAULT_USERS_PATH" "$TARGET_USERS_FILE"
         echo "users.json initialized from example."
     else
-        echo "{}" > "$TARGET_USERS_FILE" # Sera rempli par la page de setup
+        echo "{}" > "$TARGET_USERS_FILE" # Will be filled by the setup page
         echo "Empty users.json created. Admin setup will be required."
     fi
 else
     echo "users.json already exists at $TARGET_USERS_FILE."
 fi
 
-# Initialiser Caddyfile
-if [ ! -f "$CADDY_CONFIG_FILE" ] || [ ! -s "$CADDY_CONFIG_FILE" ]; then # Si n'existe pas ou est vide
+# Initialize Caddyfile
+if [ ! -f "$CADDY_CONFIG_FILE" ] || [ ! -s "$CADDY_CONFIG_FILE" ]; then # If it does not exist or is empty
     echo "Initializing default Caddyfile at $CADDY_CONFIG_FILE..."
     if [ -f "$DEFAULT_CADDYFILE_EXAMPLE_PATH" ]; then
         cp "$DEFAULT_CADDYFILE_EXAMPLE_PATH" "$CADDY_CONFIG_FILE"
         echo "Caddyfile initialized from project example."
     else
-        # Créer un Caddyfile de base
-        echo -e "{\n\t# admin admin@example.com\n\thttp_port 80\n\thttps_port 443\n\t# acme_dns <your_dns_provider> <api_token>\n\t# L'email pour ACME peut aussi être configuré via les préférences de l'UI.\n}\n\n# Add your sites here\n# Example:\n# yourdomain.com {\n#    reverse_proxy your_internal_service:port\n# }" > "$CADDY_CONFIG_FILE"
+        # Create a basic Caddyfile
+        echo -e "{\n\t# admin admin@example.com\n\thttp_port 80\n\thttps_port 443\n\t# acme_dns <your_dns_provider> <api_token>\n\t# The email for ACME can also be configured via the UI preferences.\n}\n\n# Add your sites here\n# Example:\n# yourdomain.com {\n#    reverse_proxy your_internal_service:port\n# }" > "$CADDY_CONFIG_FILE"
         echo "Minimal default Caddyfile created."
     fi
 else
     echo "Caddyfile already exists at $CADDY_CONFIG_FILE."
 fi
 
-# S'assurer que les permissions sont correctes pour les répertoires de données montés en volume
-# Cela est important car l'utilisateur dans le conteneur (appuser) doit pouvoir écrire.
-# Le propriétaire effectif sur l'hôte ne changera pas, mais les permissions DANS LE CONTENEUR seront correctes.
-# Attention : si des fichiers existent déjà et sont possédés par root sur l'hôte, 'appuser' ne pourra pas écrire
-# à moins que les permissions de groupe/autres le permettent ou que l'on chown ici.
-# `gosu` ou `sudo` ne sont pas installés par défaut.
-# `chown` ne fonctionnera que si entrypoint est exécuté en root. On va donc chowner ici.
-# Exécuter chown en tant que root (l'entrypoint est lancé en root par défaut par Docker avant le USER du Dockerfile)
-# Ou, si l'entrypoint est lancé par `appuser`, il ne pourra pas chowner.
-# Solution : Docker exécute ENTRYPOINT *avant* de changer d'utilisateur avec la directive USER,
-# donc l'entrypoint s'exécute en root, ce qui permet de chowner.
-# Sauf si l'ENTRYPOINT est un exec form (json array), auquel cas il respecte USER.
-# Si ENTRYPOINT est shell form (string), il est wrappé par /bin/sh -c, qui s'exécute en root.
-# Notre CMD est `supervisord`, qui sera lancé par `appuser` si USER est défini avant CMD.
-# L'ENTRYPOINT `bash /entrypoint.sh` sera exécuté par root.
+# Ensure that the permissions are correct for the data directories mounted as volumes
+# This is important because the user in the container (appuser) must be able to write.
+# The effective owner on the host will not change, but the permissions IN THE CONTAINER will be correct.
+# Warning: if files already exist and are owned by root on the host, 'appuser' will not be able to write
+# unless the group/other permissions allow it or we chown here.
+# `gosu` or `sudo` are not installed by default.
+# `chown` will only work if entrypoint is executed as root. So we will chown here.
+# Execute chown as root (the entrypoint is launched as root by default by Docker before the USER of the Dockerfile)
+# Or, if the entrypoint is launched by `appuser`, it will not be able to chown.
+# Solution: Docker executes ENTRYPOINT *before* changing user with the USER directive,
+# so the entrypoint runs as root, which allows chown.
+# Unless the ENTRYPOINT is an exec form (json array), in which case it respects USER.
+# If ENTRYPOINT is shell form (string), it is wrapped by /bin/sh -c, which runs as root.
+# Our CMD is `supervisord`, which will be launched by `appuser` if USER is defined before CMD.
+# The ENTRYPOINT `bash /entrypoint.sh` will be executed by root.
 
 echo "Setting permissions for data directories..."
 chown -R appuser:appgroup "${APP_DATA_DIR}" "${CADDY_DATA_DIR}" "${CADDY_CONFIG_DIR}"
-# Le log de supervisor est déjà géré dans le Dockerfile.
+# The supervisor log is already managed in the Dockerfile.
 
 echo "Entrypoint script finished. Handing over to CMD: $@"
-# Exécuter la commande passée au script (CMD du Dockerfile, ex: supervisord)
-# exec "$@" # Si supervisord est lancé par appuser directement
-# Si supervisord doit être lancé par root (pour gérer des process root), il faut le lancer différemment.
-# Ici, CMD est ["supervisord", ...], qui sera exécuté par l'utilisateur 'appuser' car USER est défini avant CMD.
-# Supervisor lui-même s'exécute en 'appuser', mais peut lancer des programmes en tant qu'autres users si configuré.
-# Dans notre supervisord.conf, on a mis user=root pour caddy, donc supervisor (même s'il tourne en appuser)
-# essaiera de lancer caddy en root. Cela nécessite que supervisor soit lancé en root.
-# Donc, dans supervisord.conf, `user=root` pour supervisor lui-même.
-# Et dans Dockerfile, ne pas faire `USER appuser` avant CMD si supervisord doit être root.
+# Execute the command passed to the script (CMD of the Dockerfile, e.g., supervisord)
+# exec "$@" # If supervisord is launched by appuser directly
+# If supervisord must be launched by root (to manage root processes), it must be launched differently.
+# Here, CMD is ["supervisord", ...], which will be executed by the 'appuser' user because USER is defined before CMD.
+# Supervisor itself runs as 'appuser', but can launch programs as other users if configured.
+# In our supervisord.conf, we have set user=root for caddy, so supervisor (even if it runs as appuser)
+# will try to launch caddy as root. This requires supervisor to be launched as root.
+# So, in supervisord.conf, `user=root` for supervisor itself.
+# And in Dockerfile, do not do `USER appuser` before CMD if supervisord must be root.
 
-# Si supervisord.conf a `user=root` pour [supervisord] block:
+# If supervisord.conf has `user=root` for [supervisord] block:
 exec "$@"
-# Si supervisord doit s'exécuter en tant que appuser (ce qui est plus sûr s'il n'a pas besoin de root):
-# exec gosu appuser "$@" # Nécessiterait d'installer gosu
+# If supervisord must run as appuser (which is safer if it does not need root):
+# exec gosu appuser "$@" # Would require installing gosu

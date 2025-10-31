@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Statistics - CaddyPanel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Chart.js pour les graphiques -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Chart.js for charts -->
     <style>
         body {
-            /* Utiliser le thème actuel si disponible via JavaScript, sinon un gris clair par défaut */
+            /* Use the current theme if available via JavaScript, otherwise a light gray default */
         }
         .stats-container {
             max-width: 1200px;
@@ -75,7 +75,7 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 70%; /* Pour les User Agents longs */
+            max-width: 70%; /* For long User Agents */
         }
         .stat-card .value {
             font-weight: bold;
@@ -87,7 +87,7 @@
             background-color: #fff;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            min-height: 300px; /* Pour que le message "No data" soit visible */
+            min-height: 300px; /* So that the "No data" message is visible */
         }
         #loading-message, #log-config-action-area {
             text-align: center;
@@ -107,7 +107,7 @@
             margin-bottom: 10px;
         }
 
-        /* Thème sombre spécifique pour la page de stats, si le body l'a */
+        /* Dark theme specific for the stats page, if the body has it */
         body.theme-dark-blue .stats-header, body.theme-dark-green .stats-header,
         body.theme-dark-violet .stats-header, body.theme-dark-orange .stats-header,
         body.theme-dark-gray .stats-header {
@@ -168,7 +168,7 @@
     </style>
 </head>
 <body>
-    <div id="toast-container"></div> <!-- Pour les notifications toast -->
+    <div id="toast-container"></div> <!-- For toast notifications -->
     <div class="stats-container">
         <div class="stats-header">
             <h1>Global Statistics</h1>
@@ -235,7 +235,7 @@
     </div>
 
     <script>
-        // Toast function (copiée depuis script.js pour autonomie, ou pourrait être dans un fichier JS partagé)
+        // Toast function (copied from script.js for autonomy, or could be in a shared JS file)
         function showToast(message, type = 'info', duration = 5000) {
             const toastContainerEl = document.getElementById('toast-container');
             if (!toastContainerEl) {

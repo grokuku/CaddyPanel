@@ -1,26 +1,26 @@
 /*
-Mode d'emploi:
-Description: Script JavaScript pour l'interface de configuration Caddyfile (Table/Modal UI).
-Fonctionnalités:
-    - Onglet Configurator:
-        - Affiche les sites dans un tableau trié.
-        - Permet d'ajouter/modifier/supprimer des sites via un modal.
-        - Chaque modification génère, sauvegarde le Caddyfile et recharge Caddy automatiquement.
-    - Onglet Raw Caddyfile:
-        - Affiche le Caddyfile généré dans une zone de texte éditable.
-        - Permet de parser le texte brut pour mettre à jour les données des sites et le tableau.
-        - Permet d'importer/exporter le Caddyfile.
-    - Onglet Preferences:
-        - Gère les options globales (email) et les valeurs par défaut.
-        - Sauvegarde/Charge les préférences via l'API backend.
-Choix techniques:
-    - JavaScript Vanilla.
-    - API Fetch pour la communication backend.
-    - Persistance des préférences côté serveur.
-    - Stockage des configurations de site dans an array JS (`siteConfigs`).
-    - Rendu dynamique du tableau et du modal.
-    - Parsing/Génération Caddyfile multi-site côté client (best-effort).
-    - Thème stocké dans localStorage pour persistance entre pages.
+Usage:
+Description: JavaScript script for the Caddyfile configuration interface (Table/Modal UI).
+Features:
+    - Configurator Tab:
+        - Displays sites in a sorted table.
+        - Allows adding/editing/deleting sites via a modal.
+        - Each modification generates, saves the Caddyfile, and reloads Caddy automatically.
+    - Raw Caddyfile Tab:
+        - Displays the generated Caddyfile in an editable text area.
+        - Allows parsing the raw text to update site data and the table.
+        - Allows importing/exporting the Caddyfile.
+    - Preferences Tab:
+        - Manages global options (email) and default values.
+        - Saves/Loads preferences via the backend API.
+Technical choices:
+    - Vanilla JavaScript.
+    - Fetch API for backend communication.
+    - Server-side preference persistence.
+    - Storage of site configurations in a JS array (`siteConfigs`).
+    - Dynamic rendering of the table and modal.
+    - Client-side multi-site Caddyfile parsing/generation (best-effort).
+    - Theme stored in localStorage for persistence between pages.
 */
 
 // --- DOM Elements ---
@@ -148,17 +148,17 @@ if (modalSwitchToStandardBtn) modalSwitchToStandardBtn.addEventListener('click',
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', async () => {
-    // Appliquer le thème stocké en priorité, sinon celui du select, sinon le défaut CSS.
+    // Apply the stored theme first, otherwise the one from the select, otherwise the CSS default.
     const initialStoredTheme = localStorage.getItem('caddyPanelTheme');
     if (initialStoredTheme) {
-        if (themeSelect) themeSelect.value = initialStoredTheme; // Mettre à jour le select si possible
-        applyTheme(initialStoredTheme); // applyTheme va aussi mettre à jour localStorage
+        if (themeSelect) themeSelect.value = initialStoredTheme; // Update the select if possible
+        applyTheme(initialStoredTheme); // applyTheme will also update localStorage
     } else if (themeSelect) {
-        // Si aucun thème stocké, appliquer la valeur par défaut du select (et la stocker)
+        // If no stored theme, apply the default value of the select (and store it)
         applyTheme(themeSelect.value);
     }
     
-    await loadPreferences(); // loadPreferences va aussi gérer l'application du thème basé sur les préférences ou localStorage
+    await loadPreferences(); // loadPreferences will also handle applying the theme based on preferences or localStorage
     
     const initialDataScript = document.getElementById('initial-data');
     let initialContent = null;
@@ -529,7 +529,7 @@ function generateCaddyfileBlock(site) {
     
     if (site.reverse_proxy) { 
         const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
-        blockContent += `\treverse_proxy ${p}`; 
+        blockContent += `\treverse_proxy ${p}`;
         if (site.tls_skip_verify && p.startsWith('https://')) { 
             blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
         } else { 
@@ -565,7 +565,11 @@ function generateCaddyfileFromData() {
     if (adminEmail) {
         caddyfileContent += `{\n\temail ${adminEmail}\n}\n\n`;
     } else {
-        caddyfileContent += `{\n\t# email admin@example.com # Uncomment and set your email for ACME\n}\n\n`;
+        caddyfileContent += `{
+	# email admin@example.com # Uncomment and set your email for ACME
+}
+
+`;
     }
 
     if (siteConfigs.length === 0) {
@@ -678,12 +682,12 @@ async function loadPreferences() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         currentPreferences = await response.json();
 
-        // Priorité : localStorage > préférences chargées > valeur du select > défaut CSS
+        // Priority: localStorage > loaded preferences > select value > CSS default
         const storedTheme = localStorage.getItem('caddyPanelTheme');
         const themeToApply = storedTheme || currentPreferences.theme || (themeSelect ? themeSelect.value : 'theme-light-gray');
         
-        if (themeSelect) themeSelect.value = themeToApply; // Mettre à jour le select
-        applyTheme(themeToApply); // Appliquer et stocker
+        if (themeSelect) themeSelect.value = themeToApply; // Update the select
+        applyTheme(themeToApply); // Apply and store
         
         if (globalAdminEmailInput) globalAdminEmailInput.value = currentPreferences.globalAdminEmail || "";
         if (defaultSkipTlsVerifyInput) defaultSkipTlsVerifyInput.checked = currentPreferences.defaultSkipTlsVerify || false;
@@ -788,7 +792,7 @@ async function handleParseRawTextAndAutoSave() {
         parseCaddyfile(rawContent);
         showToast('Parsed successfully! Configurator updated. Saving and reloading...', 'success');
         const configTabButton = document.querySelector('.tab-buttons button[onclick*="configurator-tab"]'); 
-        if (configTabButton) { configTabButton.click(); }
+        if (configTabButton) { configTabButton.click(); } // Switch to the configurator tab
         await autoSaveAndReloadCaddy(); 
     } catch (error) {
         console.error("Error during raw text parsing or auto-save:", error);

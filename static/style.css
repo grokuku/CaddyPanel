@@ -1,14 +1,14 @@
 /*
-Mode d'emploi:
-Description: Feuille de style CSS pour l'interface de configuration Caddyfile.
-Fonctionnalités:
-    - Styles de base (body, headings, forms).
-    - Styles pour les onglets.
-    - Styles pour les thèmes (Pastel Light & Darker Dark).
-    - Styles pour le tableau de configuration des sites.
-    - Styles pour le modal d'édition/ajout de site.
-    - Styles pour le navigateur de fichiers.
-    - Styles pour les messages flash (maintenant toasts).
+Usage:
+Description: CSS stylesheet for the Caddyfile configuration interface.
+Features:
+    - Basic styles (body, headings, forms).
+    - Styles for tabs.
+    - Styles for themes (Pastel Light & Darker Dark).
+    - Styles for the site configuration table.
+    - Styles for the site edit/add modal.
+    - Styles for the file browser.
+    - Styles for flash messages (now toasts).
 */
 
 body {
@@ -135,11 +135,11 @@ button:hover, .action-btn:hover {
 .tab-buttons button.active { background-color: #ccc; font-weight: bold; }
 .tab-content { padding: 20px; border-top: none; background-color: #fff; display: none; }
 #preferences-tab small { display: block; margin-top: 5px; color: #666; font-size: 0.9em; }
-/* #prefs-saved-message { margin-top: 10px; } */ /* Remplacé par toasts */
+/* #prefs-saved-message { margin-top: 10px; } */ /* Replaced by toasts */
 
 
 /* --- Theme Styles --- */
-/* ... (copiez ici tous vos styles de thèmes existants .theme-light-blue, .theme-dark-blue, etc.) ... */
+/* ... (copy all your existing theme styles .theme-light-blue, .theme-dark-blue, etc. here) ... */
 /* --- Light Themes (Pastel) --- */
 .theme-light-blue { background-color: #f0f8ff; color: #4682b4; } .theme-light-blue h1, .theme-light-blue h2 { color: #5f9ea0; } .theme-light-blue form, .theme-light-blue .tab-content { background-color: #f8fcff; border-color: #b0c4de; } .theme-light-blue .tab-container { border-color: #add8e6; } .theme-light-blue .tab-buttons { background-color: #e0f0ff; border-bottom-color: #add8e6; } .theme-light-blue .tab-buttons button { color: #4682b4; border-right-color: #c0d4e8; } .theme-light-blue .tab-buttons button:hover { background-color: #d0e0f0; } .theme-light-blue .tab-buttons button.active { background-color: #b0c4de; } .theme-light-blue #caddyfile-output { background-color: #e6f2ff; border-color: #b0c4de; color: #4682b4; } .theme-light-blue button { background-color: #6495ed; color: white; } .theme-light-blue button:hover { background-color: #4169e1; } .theme-light-blue input, .theme-light-blue select, .theme-light-blue textarea { border-color: #b0c4de; background-color: #fff; color: #4682b4; } .theme-light-blue small { color: #5f9ea0; } .theme-light-blue #sites-table th { background-color: #e0f0ff; } .theme-light-blue #sites-table td, .theme-light-blue #sites-table th { border-color: #c0d4e8; } .theme-light-blue .modal-content { background-color: #f8fcff; border-color: #add8e6; }
 .theme-light-green { background-color: #f0fff0; color: #2e8b57; } .theme-light-green h1, .theme-light-green h2 { color: #3cb371; } .theme-light-green form, .theme-light-green .tab-content { background-color: #f5fff5; border-color: #98fb98; } .theme-light-green .tab-container { border-color: #90ee90; } .theme-light-green .tab-buttons { background-color: #e0ffe0; border-bottom-color: #90ee90; } .theme-light-green .tab-buttons button { color: #2e8b57; border-right-color: #b0f0b0; } .theme-light-green .tab-buttons button:hover { background-color: #c0f0c0; } .theme-light-green .tab-buttons button.active { background-color: #98fb98; } .theme-light-green #caddyfile-output { background-color: #e6ffe6; border-color: #98fb98; color: #2e8b57; } .theme-light-green button { background-color: #8fbc8f; color: white; } .theme-light-green button:hover { background-color: #3cb371; } .theme-light-green input, .theme-light-green select, .theme-light-green textarea { border-color: #98fb98; background-color: #fff; color: #2e8b57; } .theme-light-green small { color: #3cb371; } .theme-light-green #sites-table th { background-color: #e0ffe0; } .theme-light-green #sites-table td, .theme-light-green #sites-table th { border-color: #b0f0b0; } .theme-light-green .modal-content { background-color: #f5fff5; border-color: #90ee90; }
@@ -156,7 +156,7 @@ button:hover, .action-btn:hover {
 /* --- Raw Caddyfile Tab --- */
 #raw-caddyfile-tab textarea { width: 98%; min-height: 400px; font-family: monospace; white-space: pre; border: 1px solid #ccc; background-color: #fdfdfd; color: #333; padding: 10px; border-radius: 4px; }
 #raw-caddyfile-tab button { margin-top: 10px; }
-/* #parse-message { font-style: italic; } */ /* Remplacé par toasts */
+/* #parse-message { font-style: italic; } */ /* Replaced by toasts */
 /* Theme adjustments for raw text area */
 .theme-light-blue #raw-caddyfile-tab textarea { border-color: #99c8ff; background-color: #f8fcff; color: #003366; } .theme-light-green #raw-caddyfile-tab textarea { border-color: #99ffc2; background-color: #f5fff5; color: #004d1a; } .theme-light-violet #raw-caddyfile-tab textarea { border-color: #c099ff; background-color: #fbf5ff; color: #4b0082; } .theme-light-orange #raw-caddyfile-tab textarea { border-color: #ffc280; background-color: #fffaf5; color: #663300; } .theme-light-gray #raw-caddyfile-tab textarea { border-color: #dee2e6; background-color: #ffffff; color: #495057; }
 .theme-dark-blue #raw-caddyfile-tab textarea { border-color: #457b9d; background-color: #1f4068; color: #f1faee; } .theme-dark-green #raw-caddyfile-tab textarea { border-color: #52796f; background-color: #355e49; color: #cad2c5; } .theme-dark-violet #raw-caddyfile-tab textarea { border-color: #7b2cbf; background-color: #5a189a; color: #f4e8ff; } .theme-dark-orange #raw-caddyfile-tab textarea { border-color: #cc6600; background-color: #804000; color: #fff0e0; } .theme-dark-gray #raw-caddyfile-tab textarea { border-color: #555555; background-color: #3c3c3c; color: #e0e0e0; }
@@ -167,12 +167,12 @@ button:hover, .action-btn:hover {
 #sites-table th, #sites-table td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: middle; }
 #sites-table th { background-color: #f2f2f2; font-weight: bold; }
 #sites-table td.actions { text-align: right; white-space: nowrap; }
-#sites-table .action-btn { padding: 3px 6px; font-size: 0.85em; margin: 1px; /* Espace entre les boutons d'action */ }
-#sites-table td input[type="checkbox"] { vertical-align: middle; margin: 0; /* Centrer la checkbox */ }
+#sites-table .action-btn { padding: 3px 6px; font-size: 0.85em; margin: 1px; /* Space between action buttons */ }
+#sites-table td input[type="checkbox"] { vertical-align: middle; margin: 0; /* Center the checkbox */ }
 #sites-table td a { color: inherit; text-decoration: none; }
 #sites-table td a:hover { text-decoration: underline; color: #0056b3; }
 
-/* Centrage pour les colonnes de checkbox */
+/* Centering for checkbox columns */
 #sites-table th:nth-child(4), /* Skip TLS Verify header */
 #sites-table th:nth-child(5)  /* Authentik header */
 {
@@ -233,11 +233,11 @@ button:hover, .action-btn:hover {
 .theme-dark-gray .modal-content { background-color: #2b2b2b; border-color: #555555; } .theme-dark-gray .modal-content .options-section { background-color: #3c3c3c; border-color: #444444; } .theme-dark-gray .modal-content h3, .theme-dark-gray .modal-content .options-section h4, .theme-dark-gray .modal-toggle-buttons { border-color: #444444; } .theme-dark-gray .close-modal-btn { color: #cccccc; } .theme-dark-gray .close-modal-btn:hover { color: #e0e0e0; } .theme-dark-gray .modal-toggle-btn { background-color: #555555; border-color: #2b2b2b; color: #e0e0e0; }
 
 
-/* --- File Browser Styles (Si vous le réactivez un jour) --- */
+/* --- File Browser Styles (If you ever reactivate it) --- */
 /* #file-browser { ... } */
-/* ... (autres styles du file browser si nécessaire) ... */
+/* ... (other file browser styles if necessary) ... */
 
-/* --- Styles pour les Toasts --- */
+/* --- Toast Styles --- */
 #toast-container {
     position: fixed;
     top: 20px;
@@ -271,7 +271,7 @@ button:hover, .action-btn:hover {
 }
 
 .toast.success { background-color: #28a745; }
-.toast.danger, .toast.error { background-color: #dc3545; } /* error est un alias pour danger */
+.toast.danger, .toast.error { background-color: #dc3545; } /* error is an alias for danger */
 .toast.warning { background-color: #ffc107; color: #333; }
 .toast.info { background-color: #17a2b8; }
 
@@ -291,7 +291,7 @@ button:hover, .action-btn:hover {
 }
 .toast.warning .toast-close-btn { color: #333; }
 
-/* Styles pour les messages flash de Flask (conservés si utilisés ailleurs, sinon peuvent être supprimés) */
+/* Styles for Flask flash messages (kept if used elsewhere, otherwise can be deleted) */
 .flash-message {
     padding: 10px;
     margin: 10px 0;
