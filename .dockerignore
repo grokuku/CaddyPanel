@@ -56,3 +56,5 @@ C2RPM/plan.md
 
 # Si vous avez des tests que vous ne voulez pas dans l'image de production
 # tests/
+
+GEMINI.md
