@@ -43,6 +43,9 @@ jobs:
       uses: docker/metadata-action@v5
       with:
         images: holaflenain/caddypanel
+        tags: |
+          type=ref,event=branch
+          type=raw,value=latest,enable={{is_default_branch}}
 
     # 6. Construit et pousse l'image Docker (avec cache)
     - name: Build and push Docker image
