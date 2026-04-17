@@ -60,7 +60,7 @@ fi
 # Initialize users.json (will be empty, the setup will take care of it, or copied from the example)
 if [ ! -f "$TARGET_USERS_FILE" ]; then
     echo "Initializing users.json at $TARGET_USERS_FILE..."
-    if [ -f "$DEFAULT_USERS_PATH" ] && [ "$(jq 'length' "$DEFAULT_USERS_PATH" 2>/dev/null)" != "0" ]; then # Copy if not empty and valid JSON
+    if [ -f "$DEFAULT_USERS_PATH" ] && [ -s "$DEFAULT_USERS_PATH" ]; then
         cp "$DEFAULT_USERS_PATH" "$TARGET_USERS_FILE"
         echo "users.json initialized from example."
     else

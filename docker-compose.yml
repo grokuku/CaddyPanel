@@ -35,6 +35,10 @@ services:
       # You can generate one with: openssl rand -hex 32
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
       
+      # Path where Caddy will write JSON access logs (used by the Stats page).
+      # This should match the Caddy log output in your Caddyfile.
+      # - CADDY_ACCESS_LOG_FILE=/var/log/caddy_access.json.log
+      
       # Timezone for Caddy and application logs to be accurate.
       # List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
       - TZ=Etc/UTC

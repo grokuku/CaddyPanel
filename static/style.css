@@ -237,6 +237,13 @@ button:hover, .action-btn:hover {
 /* #file-browser { ... } */
 /* ... (other file browser styles if necessary) ... */
 
+/* Theme adjustments for auth pages (login/setup) */
+.theme-dark-blue.auth-page { background-color: #0b132b; color: #a8dadc; } .theme-dark-blue.auth-page .auth-container { background-color: #1d3557; border-color: #457b9d; } .theme-dark-blue.auth-page h1 { color: #457b9d; } .theme-dark-blue.auth-page h2 { color: #a8dadc; } .theme-dark-blue.auth-page input { border-color: #457b9d; background-color: #1f4068; color: #a8dadc; } .theme-dark-blue.auth-page button { background-color: #457b9d; color: #f1faee; }
+.theme-dark-green.auth-page { background-color: #18281a; color: #b8d8be; } .theme-dark-green.auth-page .auth-container { background-color: #2f4f39; border-color: #52796f; } .theme-dark-green.auth-page h1 { color: #52796f; } .theme-dark-green.auth-page h2 { color: #b8d8be; } .theme-dark-green.auth-page input { border-color: #52796f; background-color: #355e49; color: #b8d8be; } .theme-dark-green.auth-page button { background-color: #52796f; color: #ffffff; }
+.theme-dark-violet.auth-page { background-color: #1c132a; color: #e0c3fc; } .theme-dark-violet.auth-page .auth-container { background-color: #3c096c; border-color: #7b2cbf; } .theme-dark-violet.auth-page h1 { color: #9d4edd; } .theme-dark-violet.auth-page h2 { color: #e0c3fc; } .theme-dark-violet.auth-page input { border-color: #7b2cbf; background-color: #5a189a; color: #e0c3fc; } .theme-dark-violet.auth-page button { background-color: #7b2cbf; color: #f4e8ff; }
+.theme-dark-orange.auth-page { background-color: #331a00; color: #ffddb3; } .theme-dark-orange.auth-page .auth-container { background-color: #663300; border-color: #cc6600; } .theme-dark-orange.auth-page h1 { color: #e85d04; } .theme-dark-orange.auth-page h2 { color: #ffddb3; } .theme-dark-orange.auth-page input { border-color: #cc6600; background-color: #804000; color: #ffddb3; } .theme-dark-orange.auth-page button { background-color: #cc6600; color: #fff0e0; }
+.theme-dark-gray.auth-page { background-color: #1a1a1a; color: #cccccc; } .theme-dark-gray.auth-page .auth-container { background-color: #2b2b2b; border-color: #555555; } .theme-dark-gray.auth-page h1 { color: #999999; } .theme-dark-gray.auth-page h2 { color: #cccccc; } .theme-dark-gray.auth-page input { border-color: #555555; background-color: #3c3c3c; color: #cccccc; } .theme-dark-gray.auth-page button { background-color: #555555; color: #e0e0e0; }
+
 /* --- Toast Styles --- */
 #toast-container {
     position: fixed;

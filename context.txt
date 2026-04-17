@@ -49,30 +49,58 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 ======================================================================
 
 - app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
-- Dockerfile: Multi-stage build of the Docker image. Retrieves Caddy, installs Python/dependencies/app.
-- docker-compose.yml: Deployment orchestration. Defines service, volumes, reads the .env.
-- docker/entrypoint.sh: Init script at container startup. Creates default configs, manages permissions.
-- docker/supervisord.conf: Supervisor config. Manages `caddy` (root) and `flaskapp` (user) processes. Redirects logs.
-- templates/: HTML templates (Jinja2) for Flask. (index, stats, login, setup).
-- static/: Static files. `script.js` (UI logic, API, client-side Caddyfile parsing), `style.css` (themes).
+  - Uses `_find_matching_brace()` and `_remove_directive_block()` for proper Caddyfile parsing (handles nested braces, strings, comments).
+  - Secret key: auto-generated via `secrets.token_hex(32)` if FLASK_SECRET_KEY is not set or uses default insecure key.
+  - Session cookies: HTTPOnly=True, SameSite=Lax.
+  - `CADDY_CONFIG_FILE` reads from both `CADDY_CONFIG` and `CADDY_CONFIG_FILE` env vars (fallback chain).
+  - Log processing uses `deque(f, maxlen=N)` for memory efficiency.
+  - Stats timestamps use `timezone.utc` (no longer local timezone mislabeled as UTC).
+  - Error rate counts only 5xx (not 4xx).
+- Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE` env var.
+- docker-compose.yml: Deployment orchestration. Defines service, volumes, env vars. Documents `CADDY_ACCESS_LOG_FILE`.
+- docker/entrypoint.sh: Init script. No longer depends on `jq` (uses `[ -s ]` instead). Creates default configs, manages permissions.
+- docker/supervisord.conf: Manages `caddy` (root) and `flaskapp` (appuser) processes.
+  - Caddy runs WITHOUT `--resume` flag (uses Caddyfile on startup).
+  - Single `user=root` for caddy (removed duplicate).
+  - Flaskapp environment passes both `CADDY_CONFIG` and `CADDY_CONFIG_FILE`, plus `CADDY_ACCESS_LOG_FILE`.
+- templates/index.html: XSS protection via `|tojson|replace('<\/', '<\\/')|safe` for initial data script.
+- templates/login.html & setup.html: Apply stored theme from localStorage on page load.
+- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling with string/comment awareness). Validates modal inputs before save (custom content non-empty, authentik outpost URL required).
+- static/style.css: Added dark theme styles for auth pages (`.auth-page`).
 - caddyfile/Caddyfile: Example Caddyfile for initialization.
-- requirements.txt: Python dependencies (Flask).
-- .env: Example file for environment variables (FLASK_SECRET_KEY, TZ).
-- .dockerignore: Excludes unnecessary files from the Docker build.
-- README.md: Build and execution instructions.
-- context.txt: This file. Context for the LLM.
-- .github/workflows/docker-publish.yml: GitHub Actions workflow to build and push the multi-arch Docker image to Docker Hub.
+- requirements.txt: Flask, Werkzeug, gunicorn.
 
 
 ======================================================================
 4. PROJECT STATUS
 ======================================================================
 
-ACTIVE_BUGS:
-- Stats/Logs: The statistics page does not display correctly or shows no data, suggesting a problem with the collection or processing of logs (`read_caddy_logs` in `app.py` or Caddy's logging configuration).
+ACTIVE_BUGS / KNOWN_LIMITATIONS:
+- No CSRF protection on POST endpoints (login, setup, API). Would require Flask-WTF or custom token mechanism.
+- No login rate-limiting (brute-force possible).
+- No password change feature (only admin creation at setup).
+- Single-user system (no multi-user support).
+- BASE_DIR for file browsing is CWD (`Path('.').resolve()`), which includes app source code. A logged-in user can read users.json, app.py, etc. via `/api/readfile`.
+- Read-only Caddyfile path: `caddyfilePath` is always forced to `CADDY_CONFIG_FILE` regardless of user input (by design, but confusing).
 
 ROADMAP:
-- Set up automated build and publication to Docker Hub via GitHub Actions.
+- Add CSRF protection (see design decision below).
+- Add login rate-limiting.
+- Add password change feature.
+- Restrict `/api/browse` and `/api/readfile` to specific directories only.
+- Multi-user/role support.
+
+DESIGN DECISION — CSRF Protection:
+- Pattern chosen: Double Submit Cookie (token in JSON body, not in custom header).
+- Rationale: CaddyPanel is typically served behind Caddy itself (reverse proxy). A custom header (X-CSRF-Token) could be stripped by some corporate proxies/WAFs. Putting the token in the JSON body avoids this issue entirely.
+- Implementation plan:
+  1. Backend: Generate `csrf_token` in Flask session, set a non-httponly cookie `csrf_token` via after_request hook.
+  2. Backend: Validate `csrf_token` field in JSON body on all POST endpoints (login, setup, API).
+  3. Frontend: JS reads cookie via `document.cookie` regex, includes `csrf_token` in every fetch() JSON body.
+  4. Templates: Add hidden `csrf_token` field in login/setup forms.
+- Why this works with reverse proxies: No custom headers to strip. Caddy passes everything through unchanged. Even if another proxy strips X-* headers, the token in the body is untouched.
+- Why not SameSite cookies alone: SameSite=Lax protects against cross-site top-level navigations (GET), but NOT against same-site subrequests or POST from subdomains. Also older browsers ignore SameSite.
+- Why not Flask-WTF: Adds dependency, overkill for this project. A small manual implementation is sufficient.
 
 IN_PROGRESS:
 - None at the moment.
@@ -90,7 +118,28 @@ COMPLETED_FEATURES:
 - Basic statistics page.
 - Caddy log configuration wizard.
 - Multi-architecture Docker build.
-- BUGFIX: Correction of the state of the "Skip TLS Verify" checkbox in the UI.
+
+COMPLETED_BUGFIXES (v1.2):
+- CRITICAL: XSS via `</script>` injection in initial-data JSON block (index.html). Fixed with `|replace('</', '<\\/')|safe`.
+- CRITICAL: TypeError from trailing commas in exception handlers creating 1-tuples instead of Response tuples (app.py reload_caddy_config). Fixed with proper `(response, status_code)` returns.
+- CRITICAL: Regex `[\s\S]*?` for Caddyfile global block and site block parsing failed with nested braces (both app.py and script.js). Rewritten with proper brace-matching parsers (`_find_matching_brace`, `_remove_directive_block`, JS `findMatchingBrace`).
+- CRITICAL: Hardcoded insecure Flask secret key. Now auto-generates random key with warning if not set.
+- IMPORTANT: `datetime.fromtimestamp()` used local timezone but displayed "UTC". Fixed with `timezone.utc`.
+- IMPORTANT: Caddy `--resume` flag caused config from last run to override Caddyfile changes on restart. Flag removed.
+- IMPORTANT: `setup()` route overwrote all users if somehow reached. Added defensive check for existing admin.
+- IMPORTANT: Duplicate `user=root` in supervisord.conf for caddy program. Removed.
+- IMPORTANT: 4xx status codes incorrectly counted in error_rate. Now only 5xx counted.
+- IMPORTANT: `jq` dependency in entrypoint.sh not installed in container. Replaced with `[ -s ]` file size check.
+- IMPORTANT: `CADDY_CONFIG` vs `CADDY_CONFIG_FILE` env var inconsistency. Flask now reads both, supervisor passes both.
+- MODERATE: Entire log file read into memory before slicing. Now uses `collections.deque(f, maxlen=N)` for streaming efficiency.
+- MODERATE: `log_entry` variable referenced in except block before assignment. Removed unsafe reference.
+- MODERATE: Modal save allowed empty Authentik outpost URL with only a warning toast. Now blocks submission with `return`.
+- MODERATE: Custom config mode allowed saving empty content. Now validated.
+- MODERATE: Login/setup pages didn't apply dark themes. Added localStorage theme script and CSS rules.
+- MODERATE: `CADDY_ACCESS_LOG_FILE` not documented in docker-compose or Dockerfile. Added env var and documentation.
+- MODERATE: Session cookie security settings missing. Added `HTTPOnly=True`, `SameSite=Lax`.
+- MODERATE: Duplicate `'header'` in JS knownDirectives array. Replaced with `Set` (deduped automatically).
+
 
 ======================================================================
 5. MAINTENANCE RULES FOR THIS FILE

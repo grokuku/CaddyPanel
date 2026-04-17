@@ -471,8 +471,13 @@ async function saveSiteFromModal() {
     } else {
         const standardData = collectStandardModalData();
         siteData = { ...siteData, ...standardData, is_custom: false, custom_content: null };
+        if (siteData.is_custom && !siteData.custom_content.trim()) {
+            showToast("Custom configuration content cannot be empty.", "warning");
+            return;
+        }
         if (siteData.forward_auth && !siteData.forward_auth.outpost_url) {
             showToast("Authentik Outpost URL is required if Authentik is enabled.", "warning");
+            return;
         }
     }
 
@@ -706,81 +711,175 @@ async function loadPreferences() {
     }
 }
 
-// --- Caddyfile Parser (Multi-Site, Table UI) ---
-function parseCaddyfile(content) {
-    siteConfigs = []; 
-    if (globalAdminEmailInput) globalAdminEmailInput.value = '';
-
-    const globalBlockMatch = content.match(/^\{([\s\S]*?)^}/m);
-    if (globalBlockMatch && globalBlockMatch[1]) {
-        const globalContent = globalBlockMatch[1]; 
-        const emailMatch = globalContent.match(/^\s*email\s+([^\s]+)/m);
-        if (emailMatch && emailMatch[1] && globalAdminEmailInput) { 
-            globalAdminEmailInput.value = emailMatch[1]; 
+// --- Caddyfile Brace Matching Helper ---
+function findMatchingBrace(content, openBraceIndex) {
+    // Find the position of the closing brace that matches the opening brace at openBraceIndex.
+    // Handles nested braces, quoted strings, and comments.
+    if (openBraceIndex >= content.length || content[openBraceIndex] !== '{') return -1;
+    let depth = 0;
+    let inString = false;
+    let inComment = false;
+    for (let i = openBraceIndex; i < content.length; i++) {
+        const char = content[i];
+        if (inComment) {
+            if (char === '\n') inComment = false;
+            continue;
+        }
+        if (inString) {
+            if (char === '\\') { i++; continue; }
+            if (char === '"') inString = false;
+            continue;
+        }
+        if (char === '#') { inComment = true; continue; }
+        if (char === '"') { inString = true; continue; }
+        if (char === '{') depth++;
+        if (char === '}') {
+            depth--;
+            if (depth === 0) return i;
         }
     }
-    
-    const siteBlockRegex = /^([a-zA-Z0-9\.\-\*:, ]+?)\s*\{([\s\S]*?)^}/gm;
-    const knownDirectives = ['log', 'tls', 'forward_auth', 'try_files', 'handle', 'route', 'header', 'request_header', 'response_header', 'handle_errors', 'encode', 'redir', 'rewrite', 'uri', 'vars', 'import', 'acme_dns', 'auto_https', 'on_demand_tls', 'local_certs', 'skip_log', 'basicauth', 'jwt', 'oidc', 'ip_match', 'remote_ip', 'client_ip', 'method', 'path', 'path_regexp', 'query', 'expression', 'not', 'abort', 'error', 'respond', 'reverse_proxy', 'php_fastcgi', 'file_server', 'root', 'templates', 'markdown', 'push', 'try_files', 'header', 'request_header', 'response_header', 'handle_errors', 'metrics', 'pprof', 'health_check'];
-    let match; 
-    
-    while ((match = siteBlockRegex.exec(content)) !== null) {
-        const potentialAddress = match[1].trim(); 
-        if (potentialAddress === '' || (match.index === 0 && content.startsWith('{')) || knownDirectives.includes(potentialAddress.toLowerCase().split(/\s+/)[0])) {
-            continue; 
+    return -1;
+}
+
+// --- Caddyfile Parser (Multi-Site, Table UI) ---
+function parseCaddyfile(content) {
+    siteConfigs = [];
+    if (globalAdminEmailInput) globalAdminEmailInput.value = '';
+
+    // Parse global block using proper brace matching
+    let globalCloseIndex = -1;
+    const firstNonWhitespace = content.search(/\S/);
+    if (firstNonWhitespace !== -1 && content[firstNonWhitespace] === '{') {
+        globalCloseIndex = findMatchingBrace(content, firstNonWhitespace);
+        if (globalCloseIndex !== -1) {
+            const globalContent = content.substring(firstNonWhitespace + 1, globalCloseIndex);
+            const emailMatch = globalContent.match(/^\s*email\s+([^\s]+)/m);
+            if (emailMatch && emailMatch[1] && globalAdminEmailInput) {
+                globalAdminEmailInput.value = emailMatch[1];
+            }
         }
-        
-        const siteAddress = potentialAddress; 
-        const siteContent = match[2];
-        const siteData = { address: siteAddress, is_custom: false, custom_content: null };
-        
-        // **BUG FIX:** Explicit check for custom config marker
-        if (siteContent.includes('# CADDYPANEL_CUSTOM_CONFIG')) {
-            siteData.is_custom = true;
-            // Remove the marker line for display in the textarea
-            siteData.custom_content = siteContent.replace(/# CADDYPANEL_CUSTOM_CONFIG\s*\n?/, '').trim();
-            siteConfigs.push(siteData);
-            continue; // Skip to the next site block
+    }
+
+    // Determine starting position for site blocks (skip global block)
+    let pos = (globalCloseIndex !== -1) ? globalCloseIndex + 1 : 0;
+
+    const knownDirectives = new Set(['log', 'tls', 'forward_auth', 'try_files', 'handle', 'route',
+        'request_header', 'response_header', 'handle_errors', 'encode', 'redir', 'rewrite',
+        'uri', 'vars', 'import', 'acme_dns', 'auto_https', 'on_demand_tls', 'local_certs', 'skip_log',
+        'basicauth', 'jwt', 'oidc', 'ip_match', 'remote_ip', 'client_ip', 'method', 'path',
+        'path_regexp', 'query', 'expression', 'not', 'abort', 'error', 'respond', 'reverse_proxy',
+        'php_fastcgi', 'file_server', 'root', 'templates', 'markdown', 'push', 'metrics', 'pprof',
+        'health_check', 'header']);
+
+    while (pos < content.length) {
+        // Find next opening brace
+        const bracePos = content.indexOf('{', pos);
+        if (bracePos === -1) break;
+
+        // Find the start of the line containing this brace
+        let lineStart = content.lastIndexOf('\n', bracePos - 1);
+        if (lineStart === -1) lineStart = 0;
+        else lineStart += 1;
+
+        // Extract the address (text before the brace on the same line)
+        let address = content.substring(lineStart, bracePos).trim();
+
+        // Skip if address is a known directive nested block, or if empty
+        if (!address || knownDirectives.has(address.toLowerCase().split(/\s+/)[0])) {
+            const closePos = findMatchingBrace(content, bracePos);
+            if (closePos === -1) break;
+            pos = closePos + 1;
+            continue;
         }
 
-        // --- Standard parsing logic (only if not custom) ---
+        // Find matching closing brace for this site block
+        const closePos = findMatchingBrace(content, bracePos);
+        if (closePos === -1) break;
+
+        const siteContent = content.substring(bracePos + 1, closePos);
+        const siteData = { address: address, is_custom: false, custom_content: null };
+
+        // Check for custom config marker
+        if (siteContent.includes('# CADDYPANEL_CUSTOM_CONFIG')) {
+            siteData.is_custom = true;
+            siteData.custom_content = siteContent.replace(/# CADDYPANEL_CUSTOM_CONFIG\s*\n?/, '').trim();
+            siteConfigs.push(siteData);
+            pos = closePos + 1;
+            continue;
+        }
+
+        // Standard parsing logic
         siteData.tls = 'auto';
         siteData.tls_skip_verify = false;
         siteData.forward_auth = null;
 
-        const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m); 
+        const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
         if (rootMatch) siteData.root = rootMatch[1];
         if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
-        const rpBlockRegex = /^\s*reverse_proxy\s+([^\s{]+)\s*(?:\{([\s\S]*?)\})?/m;
-        const rpMatch = siteContent.match(rpBlockRegex);
-        if (rpMatch && !rpMatch[1].includes('/outpost.goauthentik.io/')) {
-            siteData.reverse_proxy = rpMatch[1].trim();
-            const blockContent = rpMatch[2] || '';
-            if (blockContent.includes('tls_insecure_skip_verify')) {
-                siteData.tls_skip_verify = true;
+
+        // Parse reverse_proxy using brace matching for transport sub-blocks
+        const rpLineMatch = siteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
+        if (rpLineMatch && !rpLineMatch[1].includes('/outpost.goauthentik.io/')) {
+            siteData.reverse_proxy = rpLineMatch[1].trim();
+            // Check for transport block with tls_insecure_skip_verify
+            const rpIndex = siteContent.indexOf('reverse_proxy');
+            const rpBracePos = siteContent.indexOf('{', rpIndex);
+            if (rpBracePos !== -1) {
+                // Verify this brace is on the same line as the reverse_proxy directive
+                const lineBefore = siteContent.substring(Math.max(0, rpBracePos - 60), rpBracePos);
+                if (lineBefore.includes('reverse_proxy')) {
+                    const rpClosePos = findMatchingBrace(siteContent, rpBracePos);
+                    if (rpClosePos !== -1) {
+                        const rpBlockContent = siteContent.substring(rpBracePos + 1, rpClosePos);
+                        if (rpBlockContent.includes('tls_insecure_skip_verify')) {
+                            siteData.tls_skip_verify = true;
+                        }
+                    }
+                }
             }
         }
+
         const tlsMatch = siteContent.match(/^\s*tls\s+([^\s]+)/m);
         if (tlsMatch) siteData.tls = tlsMatch[1].trim();
-        const logBlockMatch = siteContent.match(/^\s*log\s*\{([\s\S]*?)\s*}/m);
-        if (logBlockMatch) { 
-            const logOutputMatch = logBlockMatch[1].match(/^\s*output\s+([^\s]+)/m); 
-            if (logOutputMatch) siteData.log = logOutputMatch[1]; 
+
+        // Parse log block with proper brace matching
+        const logLineMatch = siteContent.match(/^\s*log\s*\{/m);
+        if (logLineMatch) {
+            const logOpenPos = siteContent.indexOf('{', siteContent.indexOf('log'));
+            if (logOpenPos !== -1) {
+                const logClosePos = findMatchingBrace(siteContent, logOpenPos);
+                if (logClosePos !== -1) {
+                    const logBlockContent = siteContent.substring(logOpenPos + 1, logClosePos);
+                    const logOutputMatch = logBlockContent.match(/^\s*output\s+([^\s]+)/m);
+                    if (logOutputMatch) siteData.log = logOutputMatch[1];
+                }
+            }
         }
-        const forwardAuthBlockRegex = /^\s*forward_auth\s+([^\s]+)\s*\{([\s\S]*?)\s*}/m;
-        const forwardAuthMatch = siteContent.match(forwardAuthBlockRegex);
-        if (forwardAuthMatch) {
-            siteData.forward_auth = { 
-                outpost_url: forwardAuthMatch[1].trim(),
-                uri: (forwardAuthMatch[2].match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
-                copy_headers: (forwardAuthMatch[2].match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
-                trusted_proxies: (forwardAuthMatch[2].match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
-            };
+
+        // Parse forward_auth with proper brace matching
+        const faLineMatch = siteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
+        if (faLineMatch) {
+            const faOpenPos = siteContent.indexOf('{', siteContent.indexOf('forward_auth'));
+            if (faOpenPos !== -1) {
+                const faClosePos = findMatchingBrace(siteContent, faOpenPos);
+                if (faClosePos !== -1) {
+                    const faBlockContent = siteContent.substring(faOpenPos + 1, faClosePos);
+                    siteData.forward_auth = {
+                        outpost_url: faLineMatch[1].trim(),
+                        uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
+                        copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
+                        trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
+                    };
+                }
+            }
         }
+
         siteConfigs.push(siteData);
+        pos = closePos + 1;
     }
+
     renderSitesTable();
-    generateCaddyfileFromData(); 
+    generateCaddyfileFromData();
 }
 
 // --- Raw Text Parsing & Import/Export ---

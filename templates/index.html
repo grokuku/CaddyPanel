@@ -6,7 +6,7 @@
     <title>CaddyPanel - Caddy 2 Control Panel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script id="initial-data" type="application/json">
-        {{ {"initial_caddyfile_content": initial_caddyfile_content}|tojson|safe }}
+        {{ {"initial_caddyfile_content": initial_caddyfile_content}|tojson|replace('</', '<\\/')|safe }}
     </script>
     <!-- Style to hide initial flash messages if they are transformed into toasts -->
     <style>
