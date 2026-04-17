@@ -103,7 +103,7 @@ import os, sys
 path = os.environ['CADDY_CONFIG_FILE']
 try:
     content = open(path, 'r').read()
-    desired = '\tlog {\n\t\toutput stdout\n\t\tformat json {\n\t\t\ttime_format rfc3339\n\t\t}\n\t\tlevel INFO\n\t}'
+    desired = '\tlog {\n\t\toutput stdout\n\t\tformat json\n\t\tlevel INFO\n\t}'
     # Find the global block (first top-level '{')
     for i, ch in enumerate(content):
         if ch not in (' ', '\t', '\n', '\r'):

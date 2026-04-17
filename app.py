@@ -463,7 +463,7 @@ def _configure_caddyfile_logging_internal():
     Returns a dict with 'status' and 'message' keys (no HTTP status code).
     Does NOT require request context — can be called from the stats API."""
     caddyfile_path = CADDY_CONFIG_FILE
-    desired_log_config = "\tlog {\n\t\toutput stdout\n\t\tformat json {\n\t\t\ttime_format rfc3339\n\t\t}\n\t\tlevel INFO\n\t}"
+    desired_log_config = "\tlog {\n\t\toutput stdout\n\t\tformat json\n\t\tlevel INFO\n\t}"
 
     if not caddyfile_path.exists():
         return {"status": "error", "message": f"Caddyfile not found at {caddyfile_path}."}

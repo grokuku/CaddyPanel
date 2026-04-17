@@ -5,9 +5,7 @@
 
         log {
             output stdout
-            format json {
-                time_format rfc3339
-            }
+            format json
             level INFO
         }
     }

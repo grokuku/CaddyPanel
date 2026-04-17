@@ -18,6 +18,28 @@ import sqlite3
 import time as time_module
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+import re as _re
+
+
+def _parse_ts(ts_value):
+    """Parse a Caddy log timestamp to a Unix epoch float.
+    Accepts:
+      - numeric (int/float): used directly as epoch
+      - string: RFC3339 / ISO 8601 format (e.g. '2024-01-15T10:30:00Z')
+    Returns 0.0 if the value cannot be parsed."""
+    if isinstance(ts_value, (int, float)):
+        return float(ts_value) if ts_value > 0 else 0.0
+    if isinstance(ts_value, str) and ts_value:
+        try:
+            # Try ISO 8601 / RFC3339
+            # Python 3.7+ supports datetime.fromisoformat for most formats
+            s = ts_value.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(s)
+            return dt.timestamp()
+        except (ValueError, OverflowError):
+            pass
+    return 0.0
 from collections import deque
 
 _db_path = None
@@ -192,8 +214,9 @@ def process_new_logs(log_file_path):
                         break
                     try:
                         entry = json.loads(line)
-                        ts = entry.get('ts', 0)
-                        if isinstance(ts, (int, float)) and ts > 0:
+                        ts = _parse_ts(entry.get('ts', 0))
+                        if ts > 0:
+                            entry['_ts_epoch'] = ts
                             new_entries.append(entry)
                             max_ts = max(max_ts, ts)
                     except (json.JSONDecodeError, ValueError):
@@ -208,8 +231,9 @@ def process_new_logs(log_file_path):
                         continue
                     try:
                         entry = json.loads(line)
-                        ts = entry.get('ts', 0)
-                        if isinstance(ts, (int, float)) and ts > 0:
+                        ts = _parse_ts(entry.get('ts', 0))
+                        if ts > 0:
+                            entry['_ts_epoch'] = ts
                             new_entries.append(entry)
                             max_ts = max(max_ts, ts)
                     except (json.JSONDecodeError, ValueError):
@@ -238,7 +262,7 @@ def process_new_logs(log_file_path):
     # Aggregate new entries by (bucket_hour, host)
     buckets = {}
     for entry in new_entries:
-        ts = entry.get('ts', 0)
+        ts = entry.get('_ts_epoch', _parse_ts(entry.get('ts', 0)))
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         bucket_hour = dt.strftime('%Y-%m-%dT%H')
 
