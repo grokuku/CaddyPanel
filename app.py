@@ -12,8 +12,8 @@ from flask import (Flask, render_template, url_for, request, jsonify, abort,
                    session, redirect, flash)
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
-from collections import deque
-import secrets 
+import secrets
+import stats_aggregator
 
 # --- Configuration ---
 # ... (unchanged)
@@ -21,6 +21,7 @@ APP_DATA_DIR = Path(os.environ.get('APP_DATA_DIR', '.')).resolve()
 CADDY_CONFIG_FILE = Path(os.environ.get('CADDY_CONFIG', os.environ.get('CADDY_CONFIG_FILE', '/etc/caddy/Caddyfile'))).resolve()
 CADDY_ACCESS_LOG_FILE = Path(os.environ.get('CADDY_ACCESS_LOG_FILE', '/var/log/caddy_access.json.log'))
 
+STATS_DB_PATH = APP_DATA_DIR / 'stats.db'
 PREFERENCES_FILE = APP_DATA_DIR / 'preferences.json'
 USERS_FILE = APP_DATA_DIR / 'users.json'
 BASE_DIR = Path('.').resolve() 
@@ -51,6 +52,9 @@ app.config['PREFERENCES_FILE'] = PREFERENCES_FILE
 app.config['CADDY_ACCESS_LOG_FILE'] = CADDY_ACCESS_LOG_FILE
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Initialize stats database (works both with dev server and gunicorn)
+stats_aggregator.init_stats_db(STATS_DB_PATH)
 
 # --- User Management Helpers ---
 # ... (load_users, save_users, get_admin_user - unchanged)
@@ -309,118 +313,83 @@ def reload_caddy_config():
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
 
 # --- Real Log Data Processing for Stats Page ---
-# ... (read_caddy_logs, _process_logs_for_stats - unchanged)
-def read_caddy_logs():
-    log_file_path = app.config['CADDY_ACCESS_LOG_FILE']
-    logs = []
-    max_logs_to_process = 5000 
-    if not log_file_path.exists():
-        print(f"Log file not found: {log_file_path}")
-        return logs
-    try:
-        with open(log_file_path, 'r', encoding='utf-8') as f:
-            lines_to_process = deque(f, maxlen=max_logs_to_process)
-        for line_str in lines_to_process:
-            try:
-                log_entry = json.loads(line_str)
-                if 'ts' not in log_entry or not isinstance(log_entry['ts'], (float, int)):
-                    continue
-                log_entry.setdefault('request', {})
-                log_entry['request'].setdefault('host', log_entry.get('host', 'Unknown'))
-                log_entry['request'].setdefault('method', 'GET')
-                log_entry['request'].setdefault('uri', '/')
-                log_entry['request'].setdefault('headers', {}).setdefault('User-Agent', ['Unknown'])
-                log_entry.setdefault('status', 0)
-                log_entry.setdefault('size', 0)
-                log_entry.setdefault('duration', 0)
-                logs.append(log_entry)
-            except json.JSONDecodeError as je: print(f"Error decoding JSON: {je} - Line: {line_str[:100]}")
-            except Exception as e: print(f"Error processing log line: {e}")
-        print(f"Read {len(logs)} log entries from {log_file_path}")
-        return logs
-    except IOError as e:
-        print(f"Error reading log file {log_file_path}: {e}")
-        return []
-    except Exception as e:
-        print(f"Unexpected error in read_caddy_logs: {e}")
-        return []
-
-def _process_logs_for_stats(logs):
-    if not logs:
-        return {"total_requests": 0, "requests_by_host": {}, "status_codes_dist": {}, "top_paths": [], "top_user_agents": [], "avg_response_time_ms": 0, "avg_response_size_kb": 0, "error_rate_percent": 0, "requests_timeseries": [], "data_from_utc": None, "data_to_utc": None, "log_read_error": None}
-    total_requests = len(logs)
-    requests_by_host = {}
-    status_codes_dist = {"1xx":0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, "other": 0}
-    path_counts = {}
-    user_agent_counts = {}
-    total_duration, total_size, error_count = 0, 0, 0
-    min_ts_val = logs[0]["ts"]
-    max_ts_val = logs[0]["ts"]
-    requests_per_slot = {} 
-    slot_duration_seconds = 10 * 60 
-
-    for log in logs:
-        try:
-            current_ts = float(log.get("ts", 0))
-            if current_ts == 0: continue
-            min_ts_val = min(min_ts_val, current_ts)
-            max_ts_val = max(max_ts_val, current_ts)
-            host = log.get("request", {}).get("host", "UnknownHost")
-            requests_by_host[host] = requests_by_host.get(host, 0) + 1
-            status = int(log.get("status", 0))
-            if 100 <= status <= 199: status_codes_dist["1xx"] += 1
-            elif 200 <= status <= 299: status_codes_dist["2xx"] += 1
-            elif 300 <= status <= 399: status_codes_dist["3xx"] += 1
-            elif 400 <= status <= 499: status_codes_dist["4xx"] += 1
-            elif 500 <= status <= 599: status_codes_dist["5xx"] += 1; error_count += 1
-            else: status_codes_dist["other"] += 1
-            path = log.get("request", {}).get("uri", "UnknownURI").split("?")[0] 
-            path_counts[path] = path_counts.get(path, 0) + 1
-            ua_list = log.get("request", {}).get("headers", {}).get("User-Agent", ["UnknownUA"])
-            ua_full = ua_list[0] if ua_list else "UnknownUA"
-            ua_simple = ua_full.split('/')[0].split('(')[0].strip() or "UnknownUA"
-            user_agent_counts[ua_simple] = user_agent_counts.get(ua_simple, 0) + 1
-            total_duration += float(log.get("duration", 0))
-            total_size += int(log.get("size", 0))
-            time_slot_ts = int(current_ts / slot_duration_seconds) * slot_duration_seconds
-            requests_per_slot[time_slot_ts] = requests_per_slot.get(time_slot_ts, 0) + 1
-        except Exception as e:
-            print(f"Error processing single log entry: {e} - Log: {log}")
-            continue
-    top_paths = [{"path": p, "count": c} for p, c in sorted(path_counts.items(), key=lambda item: item[1], reverse=True)[:10]]
-    top_user_agents = [{"agent": ua, "count": c} for ua, c in sorted(user_agent_counts.items(), key=lambda item: item[1], reverse=True)[:5]]
-    timeseries_data = []
-    if requests_per_slot:
-        sorted_slots = sorted(requests_per_slot.keys())
-        current_slot_ts, end_slot_ts = sorted_slots[0], sorted_slots[-1]
-        while current_slot_ts <= end_slot_ts:
-            timeseries_data.append({"time": datetime.fromtimestamp(current_slot_ts, tz=timezone.utc).strftime('%Y-%m-%d %H:%M'), "count": requests_per_slot.get(current_slot_ts, 0)})
-            current_slot_ts += slot_duration_seconds
-    return {"total_requests": total_requests, "requests_by_host": dict(sorted(requests_by_host.items(), key=lambda item: item[1], reverse=True)[:7]), "status_codes_dist": status_codes_dist, "top_paths": top_paths, "top_user_agents": top_user_agents, "avg_response_time_ms": (total_duration / total_requests * 1000) if total_requests else 0, "avg_response_size_kb": (total_size / total_requests / 1024) if total_requests else 0, "error_rate_percent": (error_count / total_requests * 100) if total_requests else 0, "data_from_utc": datetime.fromtimestamp(min_ts_val, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if total_requests else "N/A", "data_to_utc": datetime.fromtimestamp(max_ts_val, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if total_requests else "N/A", "requests_timeseries": timeseries_data, "log_read_error": None}
+# --- Stats Routes (backed by stats_aggregator) ---
 
 @app.route('/stats')
 @login_required
 def stats_page():
     return render_template('stats.html', username=session.get('username'))
 
-@app.route('/api/stats/global')
+@app.route('/api/stats')
 @login_required
-def get_global_stats():
-    log_read_error = None
-    real_logs = []
+def get_stats():
+    from urllib.parse import unquote
+    period = request.args.get('period', '7d')
+    host = request.args.get('host', None)
+    if host:
+        host = unquote(host)
+
+    # Process any new log entries incrementally
     try:
-        real_logs = read_caddy_logs()
-        if not real_logs:
-            if not app.config['CADDY_ACCESS_LOG_FILE'].exists():
-                log_read_error = f"Log file {app.config['CADDY_ACCESS_LOG_FILE']} not found. Configure Caddy for JSON logging to stdout."
-            else:
-                log_read_error = f"No processable log entries in {app.config['CADDY_ACCESS_LOG_FILE']}. Check Caddy log format."
+        stats_aggregator.process_new_logs(app.config['CADDY_ACCESS_LOG_FILE'])
     except Exception as e:
-        print(f"Critical error reading/processing logs: {e}")
-        log_read_error = f"Server error processing logs: {e}"
-    stats_data = _process_logs_for_stats(real_logs)
-    if log_read_error: stats_data["log_read_error"] = log_read_error
+        print(f"Error processing new logs: {e}")
+
+    # Run rollup (throttled internally to once every 6 hours)
+    try:
+        stats_aggregator.rollup_old_buckets()
+    except Exception as e:
+        print(f"Error during stats rollup: {e}")
+
+    # Get aggregated stats for the requested period/host
+    try:
+        stats_data = stats_aggregator.get_stats(period, host)
+    except Exception as e:
+        print(f"Error getting stats: {e}")
+        stats_data = stats_aggregator._empty_stats(period, host)
+        stats_data["log_read_error"] = f"Server error retrieving stats: {e}"
+
+    # If no data at all, try auto-configuring Caddy logging
+    if not stats_data["log_read_error"] and not stats_aggregator.has_data():
+        logging_configured = False
+        if not app.config['CADDY_ACCESS_LOG_FILE'].exists():
+            # Try to auto-configure logging in the Caddyfile
+            try:
+                from flask import session as _session
+                result = _configure_caddyfile_logging_internal()
+                if result.get("status") in ("success", "warning"):
+                    stats_data["log_read_error"] = (
+                        "Logging was not configured. Auto-configured JSON logging in Caddyfile. "
+                        "Stats will appear after Caddy generates new log entries."
+                    )
+                    logging_configured = True
+            except Exception as e:
+                print(f"Auto-configure logging attempt failed: {e}")
+
+        if not logging_configured and not app.config['CADDY_ACCESS_LOG_FILE'].exists():
+            stats_data["log_read_error"] = (
+                f"Log file {app.config['CADDY_ACCESS_LOG_FILE']} not found. "
+                "Configure Caddy for JSON logging to stdout."
+            )
+        elif not logging_configured and stats_data["total_requests"] == 0:
+            stats_data["log_read_error"] = (
+                "No processable log entries found. "
+                "Check that Caddy is configured for JSON logging."
+            )
+
     return jsonify(stats_data)
+
+
+@app.route('/api/stats/hosts')
+@login_required
+def get_stats_hosts():
+    """Return the list of hosts that have stats data."""
+    try:
+        hosts = stats_aggregator.get_available_hosts()
+    except Exception as e:
+        print(f"Error getting available hosts: {e}")
+        hosts = []
+    return jsonify(hosts)
 
 # --- Helper functions for Caddyfile parsing ---
 
@@ -489,72 +458,72 @@ def _remove_directive_block(content, directive_name):
 
 # --- API to configure logging in Caddyfile ---
 
-@app.route('/api/caddyfile/configure_logging', methods=['POST'])
-@login_required
-def configure_caddyfile_logging():
-    """
-    Attempts to add or modify the global log configuration in the Caddyfile
-    to use JSON to stdout.
-    """
+def _configure_caddyfile_logging_internal():
+    """Internal: add/modify global log config in Caddyfile for JSON stdout logging.
+    Returns a dict with 'status' and 'message' keys (no HTTP status code).
+    Does NOT require request context — can be called from the stats API."""
     caddyfile_path = CADDY_CONFIG_FILE
     desired_log_config = "\tlog {\n\t\toutput stdout\n\t\tformat json {\n\t\t\ttime_format rfc3339\n\t\t}\n\t\tlevel INFO\n\t}"
 
+    if not caddyfile_path.exists():
+        return {"status": "error", "message": f"Caddyfile not found at {caddyfile_path}."}
+
+    content = caddyfile_path.read_text(encoding='utf-8')
+
+    # Find the global block using proper brace matching
+    global_open = None
+    for i, ch in enumerate(content):
+        if ch in (' ', '\t', '\n', '\r'):
+            continue
+        elif ch == '{':
+            global_open = i
+        break
+
+    if global_open is not None:
+        global_close = _find_matching_brace(content, global_open)
+        if global_close == -1:
+            return {"status": "error", "message": "Malformed Caddyfile: unmatched opening brace in global block."}
+
+        inner_content = content[global_open + 1:global_close]
+        inner_content, _ = _remove_directive_block(inner_content, 'log')
+        new_inner = inner_content.rstrip() + '\n' + desired_log_config + '\n'
+        new_content = content[:global_open + 1] + new_inner + content[global_close:]
+    else:
+        new_content = "{\n" + desired_log_config + "\n}\n\n" + content
+
+    caddyfile_path.write_text(new_content, encoding='utf-8')
+
     try:
-        if not caddyfile_path.exists():
-            return jsonify({"status": "error", "message": f"Caddyfile not found at {caddyfile_path}. Cannot configure logging."}), 500
-
-        content = caddyfile_path.read_text(encoding='utf-8')
-        new_content = ""
-
-        # Find the global block using proper brace matching
-        global_open = None
-        for i, ch in enumerate(content):
-            if ch in (' ', '\t', '\n', '\r'):
-                continue
-            elif ch == '{':
-                global_open = i
-            break
-
-        if global_open is not None:
-            global_close = _find_matching_brace(content, global_open)
-            if global_close == -1:
-                return jsonify({"status": "error", "message": "Malformed Caddyfile: unmatched opening brace in global block."}), 500
-
-            inner_content = content[global_open + 1:global_close]
-            # Remove existing log block from inner content
-            inner_content, _ = _remove_directive_block(inner_content, 'log')
-            # Add the new log config
-            new_inner = inner_content.rstrip() + '\n' + desired_log_config + '\n'
-            new_content = content[:global_open + 1] + new_inner + content[global_close:]
+        command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        if result.returncode == 0:
+            return {"status": "success", "message": "Caddyfile updated for JSON logging and Caddy reloaded successfully."}
         else:
-            new_content = "{\n" + desired_log_config + "\n}\n\n" + content
-
-        caddyfile_path.write_text(new_content, encoding='utf-8')
-
-        try:
-            command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
-            if result.returncode == 0:
-                return jsonify({"status": "success", "message": "Caddyfile updated for JSON logging and Caddy reloaded successfully."})
-            else:
-                error_detail = (result.stderr or result.stdout or "Unknown error during reload.")[:500]
-                return jsonify({"status": "warning",
-                    "message": f"Caddyfile updated for JSON logging, but Caddy reload failed (Code: {result.returncode}). Check Caddy logs or Caddyfile syntax.",
-                    "details": error_detail})
-        except Exception as e:
-            return jsonify({"status": "error", "message": f"An unexpected error occurred during Caddy reload: {e}"}), 500
-
-    except PermissionError:
-        return jsonify({"status": "error", "message": f"Permission denied modifying Caddyfile at {caddyfile_path}"}), 500
+            error_detail = (result.stderr or result.stdout or "Unknown error during reload.")[:500]
+            return {"status": "warning",
+                "message": f"Caddyfile updated for JSON logging, but Caddy reload failed (Code: {result.returncode}).",
+                "details": error_detail}
     except Exception as e:
-        print(f"Error configuring Caddyfile logging: {e}")
-        return jsonify({"status": "error", "message": f"An unexpected error occurred: {e}"}), 500
+        return {"status": "error", "message": f"Error during Caddy reload: {e}"}
+
+
+@app.route('/api/caddyfile/configure_logging', methods=['POST'])
+@login_required
+def configure_caddyfile_logging():
+    """Attempts to add or modify the global log configuration in the Caddyfile
+    to use JSON to stdout. Delegates to _configure_caddyfile_logging_internal()."""
+    result = _configure_caddyfile_logging_internal()
+    status_code = 500 if result.get("status") == "error" else 200
+    return jsonify(result), status_code
 
 
 # Entry point to run the application
 if __name__ == '__main__':
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     CADDY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Initialize stats database
+    stats_aggregator.init_stats_db(STATS_DB_PATH)
 
     if not PREFERENCES_FILE.exists():
         print(f"Dev: Creating default preferences file at {PREFERENCES_FILE}")

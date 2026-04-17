@@ -299,7 +299,10 @@ async function handleTableActionClick(event) {
             await autoSaveAndReloadCaddy();
         }
     } else if (target.classList.contains('stats-btn')) {
-        showToast(`Statistics for "${siteConfigs[index]?.address || 'this site'}" are not yet implemented.`, "info");
+        const host = siteConfigs[index]?.address;
+        if (host) {
+            window.open(`/stats?host=${encodeURIComponent(host)}`,'_blank');
+        }
     }
 }
 

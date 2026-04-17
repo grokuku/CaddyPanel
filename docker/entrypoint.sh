@@ -86,6 +86,63 @@ else
     echo "Caddyfile already exists at $CADDY_CONFIG_FILE."
 fi
 
+# --- Auto-configure JSON logging in Caddyfile ---
+# Ensure the global block has a 'log { output stdout format json }' directive
+# so the stats system can process access logs.
+if grep -q 'format json' "$CADDY_CONFIG_FILE" 2>/dev/null; then
+    echo "Caddyfile already has JSON logging configured."
+else
+    echo "Adding JSON logging configuration to Caddyfile global block..."
+    # Use Python for reliable insertion (handles nested braces correctly)
+    python3 -c "
+import re, sys
+path = '$CADDY_CONFIG_FILE'
+try:
+    content = open(path, 'r').read()
+    desired = '\\tlog {\\n\\t\\toutput stdout\\n\\t\\tformat json {\\n\\t\\t\\ttime_format rfc3339\\n\\t\\t}\\n\\t\\tlevel INFO\\n\\t}'
+    # Find the global block (first top-level '{')
+    for i, ch in enumerate(content):
+        if ch not in (' ', '\\t', '\\n', '\\r'):
+            if ch == '{':
+                # Find matching closing brace
+                depth = 0
+                j = i
+                in_str = False
+                in_cmt = False
+                while j < len(content):
+                    c = content[j]
+                    if in_cmt:
+                        if c == '\\n': in_cmt = False
+                        j += 1; continue
+                    if in_str:
+                        if c == '\\\\\\': j += 2; continue
+                        if c == '\"': in_str = False
+                        j += 1; continue
+                    if c == '#': in_cmt = True; j += 1; continue
+                    if c == '\"': in_str = True; j += 1; continue
+                    if c == '{': depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                # Insert the log block before the closing brace
+                new_content = content[:j] + '\\n' + desired + '\\n' + content[j:]
+                open(path, 'w').write(new_content)
+                print('JSON logging added to global block.')
+                sys.exit(0)
+            break
+    # No global block found: create one
+    global_block = '{\\n' + desired + '\\n}\\n\\n'
+    new_content = global_block + content
+    open(path, 'w').write(new_content)
+    print('Global block with JSON logging created.')
+except Exception as e:
+    print(f'Warning: could not auto-configure logging: {e}', file=sys.stderr)
+    # Non-fatal: the user can configure logging via the UI later
+"
+fi
+
 # Ensure that the permissions are correct for the data directories mounted as volumes
 # This is important because the user in the container (appuser) must be able to write.
 # The effective owner on the host will not change, but the permissions IN THE CONTAINER will be correct.

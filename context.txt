@@ -42,6 +42,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 📄 LICENSE
 📄 README.md
 📄 requirements.txt
+📄 stats_aggregator.py
 
 
 ======================================================================
@@ -53,9 +54,18 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - Secret key: auto-generated via `secrets.token_hex(32)` if FLASK_SECRET_KEY is not set or uses default insecure key.
   - Session cookies: HTTPOnly=True, SameSite=Lax.
   - `CADDY_CONFIG_FILE` reads from both `CADDY_CONFIG` and `CADDY_CONFIG_FILE` env vars (fallback chain).
-  - Log processing uses `deque(f, maxlen=N)` for memory efficiency.
-  - Stats timestamps use `timezone.utc` (no longer local timezone mislabeled as UTC).
+  - Stats API: `/api/stats?period=7d&host=` and `/api/stats/hosts`. Backed by `stats_aggregator.py`. No longer reads raw logs on every request — uses SQLite aggregation.
+  - `STATS_DB_PATH = APP_DATA_DIR / 'stats.db'` — initialized both at module level (for gunicorn) and in `__main__` (for dev server).
   - Error rate counts only 5xx (not 4xx).
+- stats_aggregator.py: Incremental log processor + stats query engine.
+  - SQLite DB with `PRAGMA journal_mode=WAL` for safe concurrent access.
+  - Two tables: `hourly_stats` (retention 7d) and `daily_stats` (retention 365d). Schema: `(bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON)`.
+  - `process_new_logs(log_file_path)`: Reads new entries from log file using byte offset tracking. On first run, seeks near end (max 50MB/500k lines) to avoid reading huge history. Aggregates into `hourly_stats` with upsert + merge (top_paths/top_uas merged as JSON dicts, top-N truncated).
+  - `rollup_old_buckets()`: Throttled (once per 6h). Hourly→Daily for dates >7d old. Daily cleanup for dates >365d old. All in `BEGIN IMMEDIATE` transaction for ACID safety.
+  - `get_stats(period, host)`: Queries appropriate table(s) based on period. 24h/7d → hourly. 30d/90d/1y → daily + hourly (recent 7d). Returns same JSON structure as old API but with `period` and `host` fields.
+  - `get_available_hosts()`: UNION DISTINCT from both tables.
+  - `has_data()`: Quick check if DB has any rows.
+  - Log rotation detection: if file size < last offset, resets offset to 0.
 - Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE` env var.
 - docker-compose.yml: Deployment orchestration. Defines service, volumes, env vars. Documents `CADDY_ACCESS_LOG_FILE`.
 - docker/entrypoint.sh: Init script. No longer depends on `jq` (uses `[ -s ]` instead). Creates default configs, manages permissions.
@@ -65,7 +75,8 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - Flaskapp environment passes both `CADDY_CONFIG` and `CADDY_CONFIG_FILE`, plus `CADDY_ACCESS_LOG_FILE`.
 - templates/index.html: XSS protection via `|tojson|replace('<\/', '<\\/')|safe` for initial data script.
 - templates/login.html & setup.html: Apply stored theme from localStorage on page load.
-- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling with string/comment awareness). Validates modal inputs before save (custom content non-empty, authentik outpost URL required).
+- templates/stats.html: Full stats page with period selector (24h/7d/30d/90d/1y), host filter dropdown, Chart.js timeseries (adaptive granularity), summary cards. Fetches from `/api/stats` and `/api/stats/hosts`. Supports URL params `?host=X&period=7d`. Config logging button retained.
+- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling with string/comment awareness). Validates modal inputs before save. Stats button (📊) opens `/stats?host=X` in new tab.
 - static/style.css: Added dark theme styles for auth pages (`.auth-page`).
 - caddyfile/Caddyfile: Example Caddyfile for initialization.
 - requirements.txt: Flask, Werkzeug, gunicorn.
@@ -102,6 +113,19 @@ DESIGN DECISION — CSRF Protection:
 - Why not SameSite cookies alone: SameSite=Lax protects against cross-site top-level navigations (GET), but NOT against same-site subrequests or POST from subdomains. Also older browsers ignore SameSite.
 - Why not Flask-WTF: Adds dependency, overkill for this project. A small manual implementation is sufficient.
 
+DESIGN DECISION — Stats Architecture (v1.3):
+- Pattern chosen: Incremental log aggregation into SQLite (not raw log re-reading).
+- Rationale: Raw log files get rotated/truncated, losing history. Re-reading thousands of lines per API call is expensive. SQLite gives ACID, atomic writes, indexed queries, and persistence across restarts.
+- New file: `stats_aggregator.py`. No extra Python dependencies (stdlib `sqlite3`).
+- Storage: `stats.db` in APP_DATA_DIR (Docker volume).
+- Tables: `hourly_stats` (7d retention) + `daily_stats` (365d retention). One row per (bucket, host).
+- Processing: `process_new_logs()` uses byte offset tracking. On first run, reads only tail of log (<50MB / 500k lines). Subsequent runs read only new bytes. Detects log rotation (file shrink → reset offset).
+- Rollup: `rollup_old_buckets()` runs hourly→daily for dates >7d. Throttled (once per 6h). Full ACID transaction.
+- Query: `get_stats(period, host)` selects appropriate table(s). 30d/90d queries combine daily (older) + hourly (recent 7d) with no overlap.
+- API changes: `/api/stats?period=7d&host=` replaces old `/api/stats/global`. `/api/stats/hosts` added. Periods: 24h, 7d, 30d, 90d, 1y.
+- Frontend: Period selector buttons, host dropdown, adaptive chart (hourly vs daily granularity).
+- Per-site stats: 📊 button in configurator opens `/stats?host=example.com`.
+
 IN_PROGRESS:
 - None at the moment.
 
@@ -115,9 +139,16 @@ COMPLETED_FEATURES:
 - Caddyfile management UI (Configurator + Raw Editor).
 - Automatic saving and reloading of Caddy.
 - Preferences management UI.
-- Basic statistics page.
+- Statistics page with SQLite-backed aggregation (v1.3): period selector (24h/7d/30d/90d/1y), per-host filtering, adaptive timeseries, long-term retention (7d hourly + 365d daily).
 - Caddy log configuration wizard.
 - Multi-architecture Docker build.
+
+COMPLETED_BUGFIXES (v1.3):
+- CRITICAL: Stats lost on log rotation/restart. Now persisted in SQLite with incremental aggregation.
+- IMPORTANT: Stats API re-parsed entire log file on every request (slow, wasteful). Now reads only new entries via byte offset tracking.
+- IMPORTANT: No long-term stats history. Now retains 7 days of hourly data + 365 days of daily data.
+- IMPORTANT: No per-site stats. 📊 button now opens `/stats?host=X`.
+- MODERATE: Timeseries used fixed 10-min buckets regardless of period. Now adapts: hourly for 24h/7d, daily for 30d/90d/1y.
 
 COMPLETED_BUGFIXES (v1.2):
 - CRITICAL: XSS via `</script>` injection in initial-data JSON block (index.html). Fixed with `|replace('</', '<\\/')|safe`.
@@ -131,7 +162,7 @@ COMPLETED_BUGFIXES (v1.2):
 - IMPORTANT: 4xx status codes incorrectly counted in error_rate. Now only 5xx counted.
 - IMPORTANT: `jq` dependency in entrypoint.sh not installed in container. Replaced with `[ -s ]` file size check.
 - IMPORTANT: `CADDY_CONFIG` vs `CADDY_CONFIG_FILE` env var inconsistency. Flask now reads both, supervisor passes both.
-- MODERATE: Entire log file read into memory before slicing. Now uses `collections.deque(f, maxlen=N)` for streaming efficiency.
+- MODERATE: Entire log file read into memory before slicing. Now uses incremental byte offset tracking (v1.3: replaced `deque` approach entirely).
 - MODERATE: `log_entry` variable referenced in except block before assignment. Removed unsafe reference.
 - MODERATE: Modal save allowed empty Authentik outpost URL with only a warning toast. Now blocks submission with `return`.
 - MODERATE: Custom config mode allowed saving empty content. Now validated.
