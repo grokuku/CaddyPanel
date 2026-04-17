@@ -21,6 +21,7 @@ TARGET_USERS_FILE="${APP_DATA_DIR}/users.json"
 mkdir -p "${APP_DATA_DIR}"
 mkdir -p "${CADDY_CONFIG_DIR}" # e.g., /etc/caddy
 mkdir -p "${CADDY_DATA_DIR}"   # e.g., /data/caddy
+mkdir -p /var/log/caddy_panel   # for JSON access logs (persisted via volume)
 
 # Initialize preferences.json
 if [ ! -f "$TARGET_PREFS_FILE" ]; then
@@ -88,64 +89,137 @@ fi
 
 # --- Auto-configure JSON logging in Caddyfile ---
 # Ensure the global block has a 'log { output stdout format json }' directive
-# so the stats system can process access logs.
+# AND every site block has a 'log' directive, so Caddy actually emits access logs.
 if grep -q 'format json' "$CADDY_CONFIG_FILE" 2>/dev/null; then
     echo "Caddyfile already has JSON logging configured."
 else
     echo "Adding JSON logging configuration to Caddyfile global block..."
-    # Use Python for reliable insertion (handles nested braces correctly).
-    # Use a heredoc with single-quoted delimiter ('PYEOF') so bash does NOT process
-    # any escapes or variables — we write plain Python code.
-    # The CADDY_CONFIG_FILE path is passed via the already-exported environment variable.
-    python3 << 'PYEOF'
-import os, sys
+fi
+# Always run the full configuration (add global log + add log to site blocks)
+python3 << 'PYEOF'
+import os, sys, re
 
 path = os.environ['CADDY_CONFIG_FILE']
+
+
+def find_matching_brace(content, start):
+    if start >= len(content) or content[start] != '{':
+        return -1
+    depth = 0
+    i = start
+    in_string = False
+    in_comment = False
+    while i < len(content):
+        ch = content[i]
+        if in_comment:
+            if ch == '\n': in_comment = False
+            i += 1; continue
+        if in_string:
+            if ch == '\\': i += 2; continue
+            if ch == '"': in_string = False
+            i += 1; continue
+        if ch == '#': in_comment = True; i += 1; continue
+        if ch == '"': in_string = True; i += 1; continue
+        if ch == '{': depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def add_log_to_site_blocks(content, global_start, global_end):
+    """Add 'log' to every site block that lacks it."""
+    blocks = []
+    pos = 0
+    while pos < len(content):
+        idx = content.find('{', pos)
+        if idx == -1:
+            break
+        if global_start is not None and global_end is not None:
+            if global_start <= idx <= global_end:
+                pos = idx + 1
+                continue
+        line_start = content.rfind('\n', 0, idx) + 1
+        line_before = content[line_start:idx].strip()
+        if not line_before or line_before.startswith('#'):
+            pos = idx + 1
+            continue
+        close = find_matching_brace(content, idx)
+        if close == -1:
+            pos = idx + 1
+            continue
+        blocks.append((idx, close))
+        pos = close + 1
+
+    for block_open, block_close in reversed(blocks):
+        block_body = content[block_open + 1:block_close]
+        if re.search(r'^\s*log\b', block_body, re.MULTILINE):
+            continue
+        indent_match = re.search(r'\n(\s+)\S', block_body)
+        indent = indent_match.group(1) if indent_match else '\t'
+        insert = '\n' + indent + 'log'
+        content = content[:block_open + 1] + insert + content[block_open + 1:]
+    return content
+
+
 try:
     content = open(path, 'r').read()
     desired = '\tlog {\n\t\toutput stdout\n\t\tformat json\n\t\tlevel INFO\n\t}'
-    # Find the global block (first top-level '{')
+
+    # Step 1: Add/replace global log block
+    global_start = None
+    global_end = None
     for i, ch in enumerate(content):
         if ch not in (' ', '\t', '\n', '\r'):
             if ch == '{':
-                # Find matching closing brace
-                depth = 0
-                j = i
-                in_str = False
-                in_cmt = False
-                while j < len(content):
-                    c = content[j]
-                    if in_cmt:
-                        if c == '\n': in_cmt = False
-                        j += 1; continue
-                    if in_str:
-                        if c == '\\': j += 2; continue
-                        if c == '"': in_str = False
-                        j += 1; continue
-                    if c == '#': in_cmt = True; j += 1; continue
-                    if c == '"': in_str = True; j += 1; continue
-                    if c == '{': depth += 1
-                    elif c == '}':
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    j += 1
-                # Insert the log block before the closing brace
-                new_content = content[:j] + '\n' + desired + '\n' + content[j:]
-                open(path, 'w').write(new_content)
-                print('JSON logging added to global block.')
-                sys.exit(0)
+                global_start = i
+                global_end = find_matching_brace(content, i)
             break
-    # No global block found: create one
-    global_block = '{\n' + desired + '\n}\n\n'
-    new_content = global_block + content
-    open(path, 'w').write(new_content)
-    print('Global block with JSON logging created.')
+
+    if global_start is not None and global_end is not None:
+        inner = content[global_start + 1:global_end]
+        # Remove any existing log block from the global block
+        log_pattern = re.compile(r'^\s*log\s*\{', re.MULTILINE)
+        log_match = log_pattern.search(inner)
+        if log_match:
+            brace_start = inner.index('{', log_match.start())
+            brace_end = find_matching_brace(inner, brace_start)
+            if brace_end != -1:
+                line_start = inner.rfind('\n', 0, log_match.start()) + 1
+                line_end = inner.find('\n', brace_end)
+                if line_end == -1:
+                    line_end = len(inner)
+                else:
+                    line_end += 1
+                inner = inner[:line_start] + inner[line_end:]
+
+        new_inner = inner.rstrip() + '\n' + desired + '\n'
+        content = content[:global_start + 1] + new_inner + content[global_end:]
+        # Recompute global_end after modification
+        global_end = find_matching_brace(content, global_start)
+    else:
+        # No global block: create one
+        global_block = '{\n' + desired + '\n}\n\n'
+        content = global_block + content
+        # Recompute
+        for i, ch in enumerate(content):
+            if ch not in (' ', '\t', '\n', '\r'):
+                if ch == '{':
+                    global_start = i
+                    global_end = find_matching_brace(content, i)
+                break
+
+    # Step 2: Add log to every site block
+    content = add_log_to_site_blocks(content, global_start, global_end)
+
+    open(path, 'w').write(content)
+    print('JSON logging configured (global block + site blocks).')
 except Exception as e:
     print(f'Warning: could not auto-configure logging: {e}', file=sys.stderr)
     # Non-fatal: the user can configure logging via the UI later
 PYEOF
-fi
 
 # Ensure that the permissions are correct for the data directories mounted as volumes
 # This is important because the user in the container (appuser) must be able to write.
@@ -164,7 +238,7 @@ fi
 # The ENTRYPOINT `bash /entrypoint.sh` will be executed by root.
 
 echo "Setting permissions for data directories..."
-chown -R appuser:appgroup "${APP_DATA_DIR}" "${CADDY_DATA_DIR}" "${CADDY_CONFIG_DIR}"
+chown -R appuser:appgroup "${APP_DATA_DIR}" "${CADDY_DATA_DIR}" "${CADDY_CONFIG_DIR}" /var/log/caddy_panel
 # The supervisor log is already managed in the Dockerfile.
 
 echo "Entrypoint script finished. Handing over to CMD: $@"

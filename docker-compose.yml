@@ -36,8 +36,8 @@ services:
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
       
       # Path where Caddy will write JSON access logs (used by the Stats page).
-      # This should match the Caddy log output in your Caddyfile.
-      # - CADDY_ACCESS_LOG_FILE=/var/log/caddy_access.json.log
+      # This must match the supervisord stdout_logfile path.
+      - CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log
       
       # Timezone for Caddy and application logs to be accurate.
       # List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
@@ -54,3 +54,6 @@ services:
       
       # Volume for CaddyPanel's data (users, preferences).
       - ./caddypanel_data:/app_data
+
+      # Volume for Caddy and Supervisor logs (JSON access logs for stats).
+      - ./caddy_logs:/var/log/caddy_panel

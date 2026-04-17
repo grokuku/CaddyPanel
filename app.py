@@ -19,7 +19,7 @@ import stats_aggregator
 # ... (unchanged)
 APP_DATA_DIR = Path(os.environ.get('APP_DATA_DIR', '.')).resolve() 
 CADDY_CONFIG_FILE = Path(os.environ.get('CADDY_CONFIG', os.environ.get('CADDY_CONFIG_FILE', '/etc/caddy/Caddyfile'))).resolve()
-CADDY_ACCESS_LOG_FILE = Path(os.environ.get('CADDY_ACCESS_LOG_FILE', '/var/log/caddy_access.json.log'))
+CADDY_ACCESS_LOG_FILE = Path(os.environ.get('CADDY_ACCESS_LOG_FILE', '/var/log/caddy_panel/caddy_access.json.log'))
 
 STATS_DB_PATH = APP_DATA_DIR / 'stats.db'
 PREFERENCES_FILE = APP_DATA_DIR / 'preferences.json'
@@ -456,12 +456,71 @@ def _remove_directive_block(content, directive_name):
     return content[:line_start] + content[line_end:], True
 
 
+def _add_log_to_site_blocks(content):
+    """Add a 'log' directive to every site block that doesn't already have one.
+    A site block is a top-level block that is NOT the global block (the one
+    starting at the very beginning of the file after optional whitespace)."""
+    if not content.strip():
+        return content
+
+    # Find global block boundaries to skip it
+    global_start = None
+    global_end = None
+    for i, ch in enumerate(content):
+        if ch in (' ', '\t', '\n', '\r'):
+            continue
+        if ch == '{':
+            global_start = i
+            global_end = _find_matching_brace(content, i)
+        break
+
+    # Find all top-level blocks (opening braces NOT inside the global block)
+    blocks = []
+    pos = 0
+    while pos < len(content):
+        idx = content.find('{', pos)
+        if idx == -1:
+            break
+        # Skip if inside global block
+        if global_start is not None and global_end is not None:
+            if global_start <= idx <= global_end:
+                pos = idx + 1
+                continue
+        # Verify this is a site block opener (has an address before the {)
+        line_start = content.rfind('\n', 0, idx) + 1
+        line_before = content[line_start:idx].strip()
+        if not line_before or line_before.startswith('#'):
+            pos = idx + 1
+            continue
+        close = _find_matching_brace(content, idx)
+        if close == -1:
+            pos = idx + 1
+            continue
+        blocks.append((idx, close))
+        pos = close + 1
+
+    # Process blocks in reverse order so offsets stay valid
+    for block_open, block_close in reversed(blocks):
+        block_body = content[block_open + 1:block_close]
+        if re.search(r'^\s*log\b', block_body, re.MULTILINE):
+            continue  # already has log
+        # Determine indentation from existing directives
+        indent_match = re.search(r'\n(\s+)\S', block_body)
+        indent = indent_match.group(1) if indent_match else '\t'
+        # Insert 'log' right after the opening brace
+        insert = '\n' + indent + 'log'
+        content = content[:block_open + 1] + insert + content[block_open + 1:]
+
+    return content
+
+
 # --- API to configure logging in Caddyfile ---
 
 def _configure_caddyfile_logging_internal():
-    """Internal: add/modify global log config in Caddyfile for JSON stdout logging.
+    """Internal: add/modify global log config in Caddyfile for JSON stdout logging,
+    and ensure every site block has a 'log' directive so access logs are emitted.
     Returns a dict with 'status' and 'message' keys (no HTTP status code).
-    Does NOT require request context — can be called from the stats API."""
+    Does NOT require request context - can be called from the stats API."""
     caddyfile_path = CADDY_CONFIG_FILE
     desired_log_config = "\tlog {\n\t\toutput stdout\n\t\tformat json\n\t\tlevel INFO\n\t}"
 
@@ -470,7 +529,7 @@ def _configure_caddyfile_logging_internal():
 
     content = caddyfile_path.read_text(encoding='utf-8')
 
-    # Find the global block using proper brace matching
+    # --- Step 1: Ensure global block has proper log config ---
     global_open = None
     for i, ch in enumerate(content):
         if ch in (' ', '\t', '\n', '\r'):
@@ -487,11 +546,14 @@ def _configure_caddyfile_logging_internal():
         inner_content = content[global_open + 1:global_close]
         inner_content, _ = _remove_directive_block(inner_content, 'log')
         new_inner = inner_content.rstrip() + '\n' + desired_log_config + '\n'
-        new_content = content[:global_open + 1] + new_inner + content[global_close:]
+        content = content[:global_open + 1] + new_inner + content[global_close:]
     else:
-        new_content = "{\n" + desired_log_config + "\n}\n\n" + content
+        content = "{\n" + desired_log_config + "\n}\n\n" + content
 
-    caddyfile_path.write_text(new_content, encoding='utf-8')
+    # --- Step 2: Add 'log' directive to every site block that lacks one ---
+    content = _add_log_to_site_blocks(content)
+
+    caddyfile_path.write_text(content, encoding='utf-8')
 
     try:
         command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]

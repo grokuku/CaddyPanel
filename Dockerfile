@@ -42,7 +42,7 @@ ARG APP_GROUP_ID=1000
 ENV CADDY_CONFIG_DIR=/etc/caddy
 ENV CADDY_CONFIG_FILE=${CADDY_CONFIG_DIR}/Caddyfile
 ENV CADDY_DATA_DIR=/data/caddy
-ENV CADDY_ACCESS_LOG_FILE=/var/log/caddy_access.json.log
+ENV CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log
 ENV APP_DATA_DIR=/app_data
 ENV FLASK_APP_DIR=/app
 ENV FLASK_PORT=5000
@@ -84,9 +84,9 @@ COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create the log directory for supervisor
-RUN mkdir -p /var/log/supervisor && \
-    chown -R appuser:appgroup /var/log/supervisor
+# Create the log directories
+RUN mkdir -p /var/log/supervisor /var/log/caddy_panel && \
+    chown -R appuser:appgroup /var/log/supervisor /var/log/caddy_panel
 
 VOLUME ${CADDY_DATA_DIR} ${APP_DATA_DIR} ${CADDY_CONFIG_DIR}
 
