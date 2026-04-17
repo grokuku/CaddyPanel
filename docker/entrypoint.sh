@@ -115,7 +115,7 @@ try:
                         if c == '\\n': in_cmt = False
                         j += 1; continue
                     if in_str:
-                        if c == '\\\\\\': j += 2; continue
+                        if c == '\\\\\': j += 2; continue
                         if c == '\"': in_str = False
                         j += 1; continue
                     if c == '#': in_cmt = True; j += 1; continue
