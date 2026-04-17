@@ -93,16 +93,20 @@ if grep -q 'format json' "$CADDY_CONFIG_FILE" 2>/dev/null; then
     echo "Caddyfile already has JSON logging configured."
 else
     echo "Adding JSON logging configuration to Caddyfile global block..."
-    # Use Python for reliable insertion (handles nested braces correctly)
-    python3 -c "
-import re, sys
-path = '$CADDY_CONFIG_FILE'
+    # Use Python for reliable insertion (handles nested braces correctly).
+    # Use a heredoc with single-quoted delimiter ('PYEOF') so bash does NOT process
+    # any escapes or variables — we write plain Python code.
+    # The CADDY_CONFIG_FILE path is passed via the already-exported environment variable.
+    python3 << 'PYEOF'
+import os, sys
+
+path = os.environ['CADDY_CONFIG_FILE']
 try:
     content = open(path, 'r').read()
-    desired = '\\tlog {\\n\\t\\toutput stdout\\n\\t\\tformat json {\\n\\t\\t\\ttime_format rfc3339\\n\\t\\t}\\n\\t\\tlevel INFO\\n\\t}'
+    desired = '\tlog {\n\t\toutput stdout\n\t\tformat json {\n\t\t\ttime_format rfc3339\n\t\t}\n\t\tlevel INFO\n\t}'
     # Find the global block (first top-level '{')
     for i, ch in enumerate(content):
-        if ch not in (' ', '\\t', '\\n', '\\r'):
+        if ch not in (' ', '\t', '\n', '\r'):
             if ch == '{':
                 # Find matching closing brace
                 depth = 0
@@ -112,14 +116,14 @@ try:
                 while j < len(content):
                     c = content[j]
                     if in_cmt:
-                        if c == '\\n': in_cmt = False
+                        if c == '\n': in_cmt = False
                         j += 1; continue
                     if in_str:
-                        if c == '\\\\\': j += 2; continue
-                        if c == '\"': in_str = False
+                        if c == '\\': j += 2; continue
+                        if c == '"': in_str = False
                         j += 1; continue
                     if c == '#': in_cmt = True; j += 1; continue
-                    if c == '\"': in_str = True; j += 1; continue
+                    if c == '"': in_str = True; j += 1; continue
                     if c == '{': depth += 1
                     elif c == '}':
                         depth -= 1
@@ -127,20 +131,20 @@ try:
                             break
                     j += 1
                 # Insert the log block before the closing brace
-                new_content = content[:j] + '\\n' + desired + '\\n' + content[j:]
+                new_content = content[:j] + '\n' + desired + '\n' + content[j:]
                 open(path, 'w').write(new_content)
                 print('JSON logging added to global block.')
                 sys.exit(0)
             break
     # No global block found: create one
-    global_block = '{\\n' + desired + '\\n}\\n\\n'
+    global_block = '{\n' + desired + '\n}\n\n'
     new_content = global_block + content
     open(path, 'w').write(new_content)
     print('Global block with JSON logging created.')
 except Exception as e:
     print(f'Warning: could not auto-configure logging: {e}', file=sys.stderr)
     # Non-fatal: the user can configure logging via the UI later
-"
+PYEOF
 fi
 
 # Ensure that the permissions are correct for the data directories mounted as volumes
