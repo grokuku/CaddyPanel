@@ -51,83 +51,81 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 
 - app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
   - Uses `_find_matching_brace()` and `_remove_directive_block()` for proper Caddyfile parsing (handles nested braces, strings, comments).
+  - `_add_log_to_site_blocks(content, global_start, global_end)`: Scans top-level blocks outside the global block; adds `log` directive to any site block that lacks one. Preserves indentation. Processes in reverse order to keep offsets valid.
+  - `_configure_caddyfile_logging_internal()`: Two-step approach: (1) add/replace global `log { output stdout format json level INFO }` block, (2) add `log` to every site block that lacks one. This ensures Caddy actually emits access logs.
   - Secret key: auto-generated via `secrets.token_hex(32)` if FLASK_SECRET_KEY is not set or uses default insecure key.
   - Session cookies: HTTPOnly=True, SameSite=Lax.
   - `CADDY_CONFIG_FILE` reads from both `CADDY_CONFIG` and `CADDY_CONFIG_FILE` env vars (fallback chain).
   - Stats API: `/api/stats?period=7d&host=` and `/api/stats/hosts`. Backed by `stats_aggregator.py`. No longer reads raw logs on every request — uses SQLite aggregation.
   - `STATS_DB_PATH = APP_DATA_DIR / 'stats.db'` — initialized both at module level (for gunicorn) and in `__main__` (for dev server).
   - Error rate counts only 5xx (not 4xx).
+  - `CADDY_ACCESS_LOG_FILE` default: `/var/log/caddy_panel/caddy_access.json.log` (persisted via Docker volume).
 - stats_aggregator.py: Incremental log processor + stats query engine.
   - SQLite DB with `PRAGMA journal_mode=WAL` for safe concurrent access.
   - Two tables: `hourly_stats` (retention 7d) and `daily_stats` (retention 365d). Schema: `(bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON)`.
-  - `process_new_logs(log_file_path)`: Reads new entries from log file using byte offset tracking. On first run, seeks near end (max 50MB/500k lines) to avoid reading huge history. Aggregates into `hourly_stats` with upsert + merge (top_paths/top_uas merged as JSON dicts, top-N truncated).
+  - `_parse_ts(ts_value)`: Accepts both numeric (epoch) and string (RFC3339/ISO 8601) timestamps. Returns float epoch or 0.0 if unparseable. Important because Caddy's `time_format rfc3339` produces string timestamps, while default format produces float epochs.
+  - `process_new_logs(log_file_path)`: Reads new entries from log file using byte offset tracking. On first run, seeks near end (max 50MB/500k lines). Aggregates into `hourly_stats` with upsert + merge. Stores `_ts_epoch` in entries for reuse.
   - `rollup_old_buckets()`: Throttled (once per 6h). Hourly→Daily for dates >7d old. Daily cleanup for dates >365d old. All in `BEGIN IMMEDIATE` transaction for ACID safety.
   - `get_stats(period, host)`: Queries appropriate table(s) based on period. 24h/7d → hourly. 30d/90d/1y → daily + hourly (recent 7d). Returns same JSON structure as old API but with `period` and `host` fields.
   - `get_available_hosts()`: UNION DISTINCT from both tables.
   - `has_data()`: Quick check if DB has any rows.
   - Log rotation detection: if file size < last offset, resets offset to 0.
-- Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE` env var.
-- docker-compose.yml: Deployment orchestration. Defines service, volumes, env vars. Documents `CADDY_ACCESS_LOG_FILE`.
-- docker/entrypoint.sh: Init script. No longer depends on `jq` (uses `[ -s ]` instead). Creates default configs, manages permissions.
+- Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log`. Creates and chowns `/var/log/caddy_panel`.
+- docker-compose.yml: Deployment orchestration. Defines service, volumes (including `./caddy_logs:/var/log/caddy_panel` for persistent logs), env vars. `CADDY_ACCESS_LOG_FILE` explicitly set.
+- docker/entrypoint.sh: Init script. No longer depends on `jq`. Creates default configs, manages permissions.
+  - Auto-configures Caddyfile logging: always runs Python heredoc (no more grep-skip). Adds global log block + `log` directive to every site block.
+  - Uses `python3 << 'PYEOF'` heredoc (single-quoted delimiter) to avoid bash double-quote escaping issues. Reads `CADDY_CONFIG_FILE` from environment via `os.environ`.
+  - Creates `/var/log/caddy_panel` directory and chowns it.
 - docker/supervisord.conf: Manages `caddy` (root) and `flaskapp` (appuser) processes.
   - Caddy runs WITHOUT `--resume` flag (uses Caddyfile on startup).
+  - Caddy stdout → `/var/log/caddy_panel/caddy_access.json.log` (persisted via volume).
   - Single `user=root` for caddy (removed duplicate).
   - Flaskapp environment passes both `CADDY_CONFIG` and `CADDY_CONFIG_FILE`, plus `CADDY_ACCESS_LOG_FILE`.
 - templates/index.html: XSS protection via `|tojson|replace('<\/', '<\\/')|safe` for initial data script.
 - templates/login.html & setup.html: Apply stored theme from localStorage on page load.
-- templates/stats.html: Full stats page with period selector (24h/7d/30d/90d/1y), host filter dropdown, Chart.js timeseries (adaptive granularity), summary cards. Fetches from `/api/stats` and `/api/stats/hosts`. Supports URL params `?host=X&period=7d`. Config logging button retained.
-- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling with string/comment awareness). Validates modal inputs before save. Stats button (📊) opens `/stats?host=X` in new tab.
-- static/style.css: Added dark theme styles for auth pages (`.auth-page`).
-- caddyfile/Caddyfile: Example Caddyfile for initialization.
+- templates/stats.html: Full stats page with period selector, host filter, Chart.js timeseries. Chart container has `height: 350px` (fixed, not min-height) to prevent vertical expansion bug.
+- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling). Validates modal inputs. Stats button opens `/stats?host=X`.
+- static/style.css: Dark theme styles for auth pages.
+- caddyfile/Caddyfile: Example Caddyfile for initialization. Has global `log { output stdout format json level INFO }` (no `time_format rfc3339`).
 - requirements.txt: Flask, Werkzeug, gunicorn.
 
 
 ======================================================================
-4. PROJECT STATUS
+4. KEY DESIGN DECISIONS
+======================================================================
+
+CADDY LOGGING — CRITICAL ARCHITECTURE:
+- Caddy does NOT emit access logs for a site unless that site block has a `log` directive. The global `log { output stdout format json }` only configures the DEFAULT logger format/output — it does NOT automatically emit access logs.
+- Therefore, both the global block AND each site block must have `log`. The entrypoint.sh and `_configure_caddyfile_logging_internal()` both ensure this.
+- Caddy outputs JSON to stdout. Supervisord captures stdout → `/var/log/caddy_panel/caddy_access.json.log`.
+- This file is persisted via Docker volume (`./caddy_logs:/var/log/caddy_panel`).
+- IMPORTANT: `time_format rfc3339` in the Caddyfile global log config causes `ts` to be a STRING (e.g., `"2024-01-15T10:30:00Z"`). The stats_aggregator only processed numeric `ts`, so ALL entries were silently skipped → "No processable log entries found." The fix: removed `time_format rfc3339` from all Caddyfile templates AND added `_parse_ts()` to handle both formats.
+
+HEREDOC FOR PYTHON IN ENTRYPOINT.SH:
+- Must use `python3 << 'PYEOF'` (single-quoted delimiter). This tells bash to NOT process any escapes, variables, or backslashes inside the heredoc. Plain Python code can be written without bash double-quote escaping hell.
+- Must read environment variables via `os.environ['CADDY_CONFIG_FILE']` instead of `'$CADDY_CONFIG_FILE'` since the heredoc doesn't expand bash variables.
+
+DOCKER BUILD CACHE ISSUE:
+- GitHub Actions workflow uses `cache-from: type=gha` which can serve stale Docker layers. If a file change doesn't seem to take effect in the container despite being committed, bust the cache with `no-cache: true` in the workflow, then re-enable cache once confirmed working.
+
+
+======================================================================
+5. PROJECT STATUS
 ======================================================================
 
 ACTIVE_BUGS / KNOWN_LIMITATIONS:
-- No CSRF protection on POST endpoints (login, setup, API). Would require Flask-WTF or custom token mechanism.
+- No CSRF protection on POST endpoints.
 - No login rate-limiting (brute-force possible).
-- No password change feature (only admin creation at setup).
+- No password change feature.
 - Single-user system (no multi-user support).
-- BASE_DIR for file browsing is CWD (`Path('.').resolve()`), which includes app source code. A logged-in user can read users.json, app.py, etc. via `/api/readfile`.
-- Read-only Caddyfile path: `caddyfilePath` is always forced to `CADDY_CONFIG_FILE` regardless of user input (by design, but confusing).
+- BASE_DIR for file browsing is CWD, which includes app source code.
 
 ROADMAP:
-- Add CSRF protection (see design decision below).
+- Add CSRF protection.
 - Add login rate-limiting.
 - Add password change feature.
 - Restrict `/api/browse` and `/api/readfile` to specific directories only.
 - Multi-user/role support.
-
-DESIGN DECISION — CSRF Protection:
-- Pattern chosen: Double Submit Cookie (token in JSON body, not in custom header).
-- Rationale: CaddyPanel is typically served behind Caddy itself (reverse proxy). A custom header (X-CSRF-Token) could be stripped by some corporate proxies/WAFs. Putting the token in the JSON body avoids this issue entirely.
-- Implementation plan:
-  1. Backend: Generate `csrf_token` in Flask session, set a non-httponly cookie `csrf_token` via after_request hook.
-  2. Backend: Validate `csrf_token` field in JSON body on all POST endpoints (login, setup, API).
-  3. Frontend: JS reads cookie via `document.cookie` regex, includes `csrf_token` in every fetch() JSON body.
-  4. Templates: Add hidden `csrf_token` field in login/setup forms.
-- Why this works with reverse proxies: No custom headers to strip. Caddy passes everything through unchanged. Even if another proxy strips X-* headers, the token in the body is untouched.
-- Why not SameSite cookies alone: SameSite=Lax protects against cross-site top-level navigations (GET), but NOT against same-site subrequests or POST from subdomains. Also older browsers ignore SameSite.
-- Why not Flask-WTF: Adds dependency, overkill for this project. A small manual implementation is sufficient.
-
-DESIGN DECISION — Stats Architecture (v1.3):
-- Pattern chosen: Incremental log aggregation into SQLite (not raw log re-reading).
-- Rationale: Raw log files get rotated/truncated, losing history. Re-reading thousands of lines per API call is expensive. SQLite gives ACID, atomic writes, indexed queries, and persistence across restarts.
-- New file: `stats_aggregator.py`. No extra Python dependencies (stdlib `sqlite3`).
-- Storage: `stats.db` in APP_DATA_DIR (Docker volume).
-- Tables: `hourly_stats` (7d retention) + `daily_stats` (365d retention). One row per (bucket, host).
-- Processing: `process_new_logs()` uses byte offset tracking. On first run, reads only tail of log (<50MB / 500k lines). Subsequent runs read only new bytes. Detects log rotation (file shrink → reset offset).
-- Rollup: `rollup_old_buckets()` runs hourly→daily for dates >7d. Throttled (once per 6h). Full ACID transaction.
-- Query: `get_stats(period, host)` selects appropriate table(s). 30d/90d queries combine daily (older) + hourly (recent 7d) with no overlap.
-- API changes: `/api/stats?period=7d&host=` replaces old `/api/stats/global`. `/api/stats/hosts` added. Periods: 24h, 7d, 30d, 90d, 1y.
-- Frontend: Period selector buttons, host dropdown, adaptive chart (hourly vs daily granularity).
-- Per-site stats: 📊 button in configurator opens `/stats?host=example.com`.
-
-IN_PROGRESS:
-- None at the moment.
 
 COMPLETED_FEATURES:
 - Translation of French comments to English.
@@ -139,41 +137,44 @@ COMPLETED_FEATURES:
 - Caddyfile management UI (Configurator + Raw Editor).
 - Automatic saving and reloading of Caddy.
 - Preferences management UI.
-- Statistics page with SQLite-backed aggregation (v1.3): period selector (24h/7d/30d/90d/1y), per-host filtering, adaptive timeseries, long-term retention (7d hourly + 365d daily).
+- Statistics page with SQLite-backed aggregation (v1.3).
 - Caddy log configuration wizard.
 - Multi-architecture Docker build.
+- Automatic JSON logging configuration for all sites (entrypoint + app.py).
+
+COMPLETED_BUGFIXES (v1.4):
+- CRITICAL: entrypoint.sh Python inline script had bash double-quote escaping hell — `python3 -c "..."` with nested backslashes produced `SyntaxError: unterminated string literal`. Fixed by switching to `python3 << 'PYEOF'` heredoc with single-quoted delimiter (no bash escaping) + `os.environ` for variables.
+- CRITICAL: Caddy access logs not emitted despite global `log { format json }` config. Root cause: Caddy requires each site block to have a `log` directive to emit access logs; global config only sets default logger format. Fix: `_add_log_to_site_blocks()` in app.py + equivalent in entrypoint.sh Python heredoc.
+- CRITICAL: `time_format rfc3339` in Caddyfile global log caused all entries to be silently skipped by stats_aggregator (`isinstance(ts, (int, float))` check fails on string timestamps). Fix: removed `time_format rfc3339` from all Caddyfile templates; added `_parse_ts()` to handle both numeric and RFC3339 timestamps.
+- MODERATE: Stats chart "Requests per Hour" expanded vertically infinitely. Fix: changed `.chart-container` from `min-height: 300px` to `height: 350px`.
+- MODERATE: Docker build cache (GHA) serving stale layers. Fix: temporarily set `no-cache: true` in workflow.
+- MODERATE: Log file `/var/log/caddy_access.json.log` lost on container recreation. Fix: moved to `/var/log/caddy_panel/caddy_access.json.log` persisted via Docker volume.
+- MODERATE: `_add_log_to_site_blocks()` had unterminated docstring (two `"` instead of three `"`) and broken result-building logic. Rewrote with cleaner reverse-order offset approach.
 
 COMPLETED_BUGFIXES (v1.3):
 - CRITICAL: Stats lost on log rotation/restart. Now persisted in SQLite with incremental aggregation.
-- IMPORTANT: Stats API re-parsed entire log file on every request (slow, wasteful). Now reads only new entries via byte offset tracking.
-- IMPORTANT: No long-term stats history. Now retains 7 days of hourly data + 365 days of daily data.
-- IMPORTANT: No per-site stats. 📊 button now opens `/stats?host=X`.
-- MODERATE: Timeseries used fixed 10-min buckets regardless of period. Now adapts: hourly for 24h/7d, daily for 30d/90d/1y.
+- IMPORTANT: Stats API re-parsed entire log file on every request. Now reads only new entries via byte offset tracking.
+- IMPORTANT: No long-term stats history. Now retains 7 days of hourly + 365 days of daily.
+- IMPORTANT: No per-site stats. 📊 button opens `/stats?host=X`.
+- MODERATE: Timeseries used fixed 10-min buckets. Now adapts: hourly for 24h/7d, daily for 30d+.
 
 COMPLETED_BUGFIXES (v1.2):
-- CRITICAL: XSS via `</script>` injection in initial-data JSON block (index.html). Fixed with `|replace('</', '<\\/')|safe`.
-- CRITICAL: TypeError from trailing commas in exception handlers creating 1-tuples instead of Response tuples (app.py reload_caddy_config). Fixed with proper `(response, status_code)` returns.
-- CRITICAL: Regex `[\s\S]*?` for Caddyfile global block and site block parsing failed with nested braces (both app.py and script.js). Rewritten with proper brace-matching parsers (`_find_matching_brace`, `_remove_directive_block`, JS `findMatchingBrace`).
-- CRITICAL: Hardcoded insecure Flask secret key. Now auto-generates random key with warning if not set.
+- CRITICAL: XSS via `</script>` injection. Fixed with `|replace('</', '<\\/')|safe`.
+- CRITICAL: TypeError from trailing commas in exception handlers. Fixed.
+- CRITICAL: Regex Caddyfile parsing failed with nested braces. Rewritten with proper brace-matching parsers.
+- CRITICAL: Hardcoded insecure Flask secret key. Now auto-generates.
 - IMPORTANT: `datetime.fromtimestamp()` used local timezone but displayed "UTC". Fixed with `timezone.utc`.
-- IMPORTANT: Caddy `--resume` flag caused config from last run to override Caddyfile changes on restart. Flag removed.
-- IMPORTANT: `setup()` route overwrote all users if somehow reached. Added defensive check for existing admin.
-- IMPORTANT: Duplicate `user=root` in supervisord.conf for caddy program. Removed.
-- IMPORTANT: 4xx status codes incorrectly counted in error_rate. Now only 5xx counted.
-- IMPORTANT: `jq` dependency in entrypoint.sh not installed in container. Replaced with `[ -s ]` file size check.
-- IMPORTANT: `CADDY_CONFIG` vs `CADDY_CONFIG_FILE` env var inconsistency. Flask now reads both, supervisor passes both.
-- MODERATE: Entire log file read into memory before slicing. Now uses incremental byte offset tracking (v1.3: replaced `deque` approach entirely).
-- MODERATE: `log_entry` variable referenced in except block before assignment. Removed unsafe reference.
-- MODERATE: Modal save allowed empty Authentik outpost URL with only a warning toast. Now blocks submission with `return`.
-- MODERATE: Custom config mode allowed saving empty content. Now validated.
-- MODERATE: Login/setup pages didn't apply dark themes. Added localStorage theme script and CSS rules.
-- MODERATE: `CADDY_ACCESS_LOG_FILE` not documented in docker-compose or Dockerfile. Added env var and documentation.
-- MODERATE: Session cookie security settings missing. Added `HTTPOnly=True`, `SameSite=Lax`.
-- MODERATE: Duplicate `'header'` in JS knownDirectives array. Replaced with `Set` (deduped automatically).
+- IMPORTANT: Caddy `--resume` flag caused stale config. Flag removed.
+- IMPORTANT: Duplicate `user=root` in supervisord.conf. Removed.
+- IMPORTANT: 4xx counted in error_rate. Now only 5xx counted.
+- IMPORTANT: `jq` not installed in container. Replaced with `[ -s ]`.
+- IMPORTANT: `CADDY_CONFIG` vs `CADDY_CONFIG_FILE` inconsistency. Flask reads both.
+- MODERATE: Session cookie security. Added HTTPOnly, SameSite=Lax.
+- MODERATE: Duplicate `'header'` in JS knownDirectives. Replaced with Set.
 
 
 ======================================================================
-5. MAINTENANCE RULES FOR THIS FILE
+6. MAINTENANCE RULES FOR THIS FILE
 ======================================================================
 
 - Update this file with each modification (feature, bugfix).
