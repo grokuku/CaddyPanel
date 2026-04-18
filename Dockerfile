@@ -1,5 +1,5 @@
 # --- Stage 1: Caddy Builder ---
-FROM python:3.10-slim-bullseye AS caddy_builder
+FROM python:3.10-slim-bookworm AS caddy_builder
 
 ARG CADDY_VERSION=2.10.0
 # TARGETARCH is automatically provided by Docker Buildx (e.g., amd64, arm64)
@@ -32,7 +32,7 @@ RUN \
 
 
 # --- Stage 2: Final Application ---
-FROM python:3.10-slim-bullseye
+FROM python:3.10-slim-bookworm
 
 # Arguments for user and group creation
 ARG APP_USER_ID=1000
@@ -50,11 +50,12 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=off
 ENV PIP_DISABLE_PIP_VERSION_CHECK=on
 
-# Install system dependencies + geoipupdate
+# Install system dependencies + geoipupdate + curl (for entrypoint)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         supervisor \
         geoipupdate \
+        curl \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
