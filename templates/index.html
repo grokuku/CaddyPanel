@@ -52,13 +52,14 @@
                         <th>Hostname</th>
                         <th>Forward To</th>
                         <th>SSL</th>
-                        <th>Skip TLS Verify</th>
+                        <th>Skip TLS</th>
+                        <th>WS/Stream</th>
                         <th>Authentik</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="sites-table-body">
-                    <tr><td colspan="6">Loading...</td></tr>
+                    <tr><td colspan="7">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -169,6 +170,11 @@
                     <div class="form-group form-group-inline">
                         <input type="checkbox" id="modal-tls-skip-verify" name="tls-skip-verify">
                         <label for="modal-tls-skip-verify">Skip TLS Verify (for https reverse proxy target)</label>
+                    </div>
+                    <div class="form-group form-group-inline">
+                        <input type="checkbox" id="modal-websocket" name="websocket">
+                        <label for="modal-websocket">WebSocket / Streaming mode</label>
+                        <small style="display:block;margin-left:1.5em;color:var(--text-secondary);">Disables response buffering. Required for web terminals, real-time dashboards, SSE, etc.</small>
                     </div>
     
                     <div class="modal-toggle-buttons">
