@@ -42,6 +42,11 @@ services:
       # Timezone for Caddy and application logs to be accurate.
       # List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
       - TZ=Etc/UTC
+      
+      # Optional: MaxMind license key for GeoIP (country statistics on the Stats page).
+      # Get a free key at https://www.maxmind.com/en/geolite2/signup
+      # The GeoLite2-Country.mmdb database will be auto-downloaded on first start.
+      # - MAXMIND_LICENSE_KEY=your-license-key-here
 
     volumes:
       # Volume for Caddy's configuration (Caddyfile).

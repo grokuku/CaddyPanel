@@ -3,18 +3,7 @@
 Entry point for work session. Objective: conciseness for AI, not for humans. Transmit all key information, without wasted tokens on formatting.
 
 ======================================================================
-1. OPERATIONAL RULES
-======================================================================
-
-- Missing File: Report it, ask for its content, never invent it.
-- File Modification: For a simple patch, provide a one-line `sed` command. If complex or risky, provide the full content of the file. Do not use other tools (`awk`, `patch`).
-- Workflow: Propose a modification, then wait for the user's explicit agreement before continuing.
-- Scope: Only modify what is strictly necessary for the requested task. No zeal.
-- Verification: After each modification, suggest simple checkpoints or tests.
-
-
-======================================================================
-2. PROJECT TREE
+1. PROJECT TREE
 ======================================================================
 
 📁 .github/
@@ -46,7 +35,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 
 
 ======================================================================
-3. NOTES ON FILES
+2. NOTES ON FILES
 ======================================================================
 
 - app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
@@ -60,22 +49,28 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - `STATS_DB_PATH = APP_DATA_DIR / 'stats.db'` — initialized both at module level (for gunicorn) and in `__main__` (for dev server).
   - Error rate counts only 5xx (not 4xx).
   - `CADDY_ACCESS_LOG_FILE` default: `/var/log/caddy_panel/caddy_access.json.log` (persisted via Docker volume).
+  - `GEOIP_DB_PATH` env var: path to GeoLite2-Country.mmdb (default: `APP_DATA_DIR/GeoLite2-Country.mmdb`). Auto-configured if file exists at startup.
+  - `maxmindLicenseKey` preference: stored in preferences.json. Masked in GET API (`********XXXX`). Auto-downloads GeoIP DB on preference save if key provided and DB not present.
+  - `POST /api/geoip/download`: manual trigger to download GeoIP DB using stored license key.
+  - `GET /api/geoip/status`: returns `{geoip_available: bool}`.
+  - `_try_geoip_download_and_configure(license_key)`: downloads GeoLite2-Country.mmdb from MaxMind, extracts, configures stats_aggregator.
 - stats_aggregator.py: Incremental log processor + stats query engine.
   - SQLite DB with `PRAGMA journal_mode=WAL` for safe concurrent access.
-  - Two tables: `hourly_stats` (retention 7d) and `daily_stats` (retention 365d). Schema: `(bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON)`.
-  - `_parse_ts(ts_value)`: Accepts both numeric (epoch) and string (RFC3339/ISO 8601) timestamps. Returns float epoch or 0.0 if unparseable. Important because Caddy's `time_format rfc3339` produces string timestamps, while default format produces float epochs.
-  - `process_new_logs(log_file_path)`: Reads new entries from log file using byte offset tracking. On first run, seeks near end (max 50MB/500k lines). Aggregates into `hourly_stats` with upsert + merge. Stores `_ts_epoch` in entries for reuse.
-  - `rollup_old_buckets()`: Throttled (once per 6h). Hourly→Daily for dates >7d old. Daily cleanup for dates >365d old. All in `BEGIN IMMEDIATE` transaction for ACID safety.
-  - `get_stats(period, host)`: Queries appropriate table(s) based on period. 24h/7d → hourly. 30d/90d/1y → daily + hourly (recent 7d). Returns same JSON structure as old API but with `period` and `host` fields.
-  - `get_available_hosts()`: UNION DISTINCT from both tables.
-  - `has_data()`: Quick check if DB has any rows.
-  - Log rotation detection: if file size < last offset, resets offset to 0.
+  - Two tables: `hourly_stats` (retention 7d) and `daily_stats` (retention 365d). Schema: `(bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON, top_countries JSON)`.
+  - `_parse_ts(ts_value)`: Accepts both numeric (epoch) and string (RFC3339/ISO 8601) timestamps.
+  - `process_new_logs()`: Extracts `request.remote_ip` (falls back to `X-Forwarded-For` / `X-Real-Ip`). Resolves to ISO country code via `geoip2` if available, else 'Unknown'. Stores in `top_countries`.
+  - `configure_geoip(db_path)`: Optional. Loads MaxMind GeoLite2-Country.mmdb. If unavailable, country stats return 'Unknown'.
+  - `_resolve_country(ip_str)`: Returns ISO 3166-1 alpha-2 code or 'Unknown'.
+  - `is_geoip_available()`: Check if GeoIP DB is loaded.
+  - `get_stats()`: Now includes `top_countries` (top 10 by count) and `geoip_available` (bool).
+  - DB migration: on init, `ALTER TABLE ADD COLUMN top_countries` if column missing.
 - Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log`. Creates and chowns `/var/log/caddy_panel`.
 - docker-compose.yml: Deployment orchestration. Defines service, volumes (including `./caddy_logs:/var/log/caddy_panel` for persistent logs), env vars. `CADDY_ACCESS_LOG_FILE` explicitly set.
 - docker/entrypoint.sh: Init script. No longer depends on `jq`. Creates default configs, manages permissions.
   - Auto-configures Caddyfile logging: always runs Python heredoc (no more grep-skip). Adds global log block + `log` directive to every site block.
   - Uses `python3 << 'PYEOF'` heredoc (single-quoted delimiter) to avoid bash double-quote escaping issues. Reads `CADDY_CONFIG_FILE` from environment via `os.environ`.
   - Creates `/var/log/caddy_panel` directory and chowns it.
+  - GeoIP: if `MAXMIND_LICENSE_KEY` is set and GeoLite2-Country.mmdb not yet present, auto-downloads it to `APP_DATA_DIR/GeoLite2-Country.mmdb`. Exports `GEOIP_DB_PATH` env var.
 - docker/supervisord.conf: Manages `caddy` (root) and `flaskapp` (appuser) processes.
   - Caddy runs WITHOUT `--resume` flag (uses Caddyfile on startup).
   - Caddy stdout → `/var/log/caddy_panel/caddy_access.json.log` (persisted via volume).
@@ -83,7 +78,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - Flaskapp environment passes both `CADDY_CONFIG` and `CADDY_CONFIG_FILE`, plus `CADDY_ACCESS_LOG_FILE`.
 - templates/index.html: XSS protection via `|tojson|replace('<\/', '<\\/')|safe` for initial data script.
 - templates/login.html & setup.html: Apply stored theme from localStorage on page load.
-- templates/stats.html: Full stats page with period selector, host filter, Chart.js timeseries. Chart container has `height: 350px` (fixed, not min-height) to prevent vertical expansion bug.
+- templates/stats.html: Full viewport dashboard with CSS Grid layout (no scroll). Period selector + host filter. KPI cards, status bar, country cards, world heatmap (D3+TopoJSON from CDN), timeseries chart (Chart.js). Top 5 countries with flag emojis + bar indicators. Graceful if GeoIP unavailable.
 - static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling). Validates modal inputs. Stats button opens `/stats?host=X`.
 - static/style.css: Dark theme styles for auth pages.
 - caddyfile/Caddyfile: Example Caddyfile for initialization. Has global `log { output stdout format json level INFO }` (no `time_format rfc3339`).
@@ -91,7 +86,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 
 
 ======================================================================
-4. KEY DESIGN DECISIONS
+3. KEY DESIGN DECISIONS
 ======================================================================
 
 CADDY LOGGING — CRITICAL ARCHITECTURE:
@@ -110,7 +105,7 @@ DOCKER BUILD CACHE ISSUE:
 
 
 ======================================================================
-5. PROJECT STATUS
+4. PROJECT STATUS
 ======================================================================
 
 ACTIVE_BUGS / KNOWN_LIMITATIONS:
@@ -138,6 +133,7 @@ COMPLETED_FEATURES:
 - Automatic saving and reloading of Caddy.
 - Preferences management UI.
 - Statistics page with SQLite-backed aggregation (v1.3).
+- Statistics dashboard: full-viewport CSS Grid layout, no-scroll. GeoIP country tracking with top 5 countries + world heatmap (D3+TopoJSON). Optional MaxMind GeoLite2 database (auto-downloaded if MAXMIND_LICENSE_KEY set).
 - Caddy log configuration wizard.
 - Multi-architecture Docker build.
 - Automatic JSON logging configuration for all sites (entrypoint + app.py).
@@ -174,8 +170,7 @@ COMPLETED_BUGFIXES (v1.2):
 
 
 ======================================================================
-6. MAINTENANCE RULES FOR THIS FILE
+5. MAINTENANCE RULES FOR THIS FILE
 ======================================================================
 
 - Update this file with each modification (feature, bugfix).
-- At the end of each session, provide the full and updated content of this file.

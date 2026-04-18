@@ -23,6 +23,32 @@ mkdir -p "${CADDY_CONFIG_DIR}" # e.g., /etc/caddy
 mkdir -p "${CADDY_DATA_DIR}"   # e.g., /data/caddy
 mkdir -p /var/log/caddy_panel   # for JSON access logs (persisted via volume)
 
+# --- Download GeoLite2-Country database if MAXMIND_LICENSE_KEY is set ---
+GEOIP_DB_PATH="${APP_DATA_DIR}/GeoLite2-Country.mmdb"
+if [ -n "$MAXMIND_LICENSE_KEY" ] && [ ! -f "$GEOIP_DB_PATH" ]; then
+    echo "Downloading GeoLite2-Country database..."
+    GEOIP_TMP="/tmp/GeoLite2-Country.mmdb.gz"
+    if curl -fsSL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${MAXMIND_LICENSE_KEY}&suffix=tar.gz" -o /tmp/GeoLite2-Country.tar.gz 2>/dev/null; then
+        cd /tmp && tar xzf GeoLite2-Country.tar.gz && mv GeoLite2-Country_*/GeoLite2-Country.mmdb "$GEOIP_DB_PATH" 2>/dev/null
+        rm -f /tmp/GeoLite2-Country.tar.gz /tmp/GeoLite2-Country_* 2>/dev/null
+        if [ -f "$GEOIP_DB_PATH" ]; then
+            echo "GeoIP: database downloaded successfully to $GEOIP_DB_PATH"
+        else
+            echo "WARNING: GeoIP database download failed. Country stats will be unavailable."
+        fi
+        cd "${FLASK_APP_DIR}"
+    else
+        echo "WARNING: Could not download GeoLite2-Country database. Check MAXMIND_LICENSE_KEY."
+    fi
+elif [ -f "$GEOIP_DB_PATH" ]; then
+    echo "GeoIP: database already exists at $GEOIP_DB_PATH"
+else
+    echo "GeoIP: MAXMIND_LICENSE_KEY not set. Country statistics will be unavailable."
+    echo "       Get a free license key at https://www.maxmind.com/en/geolite2/signup"
+fi
+# Export GEOIP_DB_PATH so app.py can find it
+export GEOIP_DB_PATH
+
 # Initialize preferences.json
 if [ ! -f "$TARGET_PREFS_FILE" ]; then
     echo "Initializing preferences.json at $TARGET_PREFS_FILE..."

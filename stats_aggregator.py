@@ -11,6 +11,10 @@ Retention:
 Rollup:
 - Hourly -> Daily: consolidates hourly data older than 7 days
 - Daily cleanup: deletes daily data older than 365 days
+
+GeoIP:
+- Optional: resolves client IPs to country codes via MaxMind GeoLite2 (.mmdb)
+- Falls back gracefully if database is not available
 """
 
 import json
@@ -42,6 +46,41 @@ def _parse_ts(ts_value):
     return 0.0
 from collections import deque
 
+# --- Optional GeoIP ---
+_geoip_reader = None
+
+
+def configure_geoip(db_path):
+    """Configure the GeoIP resolver. Call with the path to a GeoLite2-Country.mmdb file.
+    If the file doesn't exist or can't be read, GeoIP will be disabled (countries = 'Unknown')."""
+    global _geoip_reader
+    _geoip_reader = None
+    if db_path:
+        try:
+            import geoip2.database
+            _geoip_reader = geoip2.database.Reader(db_path)
+            print(f"GeoIP: loaded database from {db_path}")
+        except Exception as e:
+            print(f"GeoIP: could not load database from {db_path}: {e}")
+
+
+def _resolve_country(ip_str):
+    """Resolve an IP address string to an ISO 3166-1 alpha-2 country code.
+    Returns 'Unknown' if GeoIP is not configured or resolution fails."""
+    if not _geoip_reader or not ip_str:
+        return 'Unknown'
+    try:
+        resp = _geoip_reader.country(ip_str)
+        return resp.country.iso_code or 'Unknown'
+    except Exception:
+        return 'Unknown'
+
+
+def is_geoip_available():
+    """Check if GeoIP resolution is available."""
+    return _geoip_reader is not None
+
+
 _db_path = None
 
 VALID_PERIODS = ('24h', '7d', '30d', '90d', '1y')
@@ -51,6 +90,7 @@ MAX_INITIAL_LINES = 500000
 MAX_INITIAL_BYTES = 50 * 1024 * 1024  # 50 MB
 TOP_N_PATHS = 20
 TOP_N_UAS = 10
+TOP_N_COUNTRIES = 20
 
 
 def init_stats_db(db_path):
@@ -77,6 +117,7 @@ def init_stats_db(db_path):
             error_count INTEGER DEFAULT 0,
             top_paths TEXT DEFAULT '{}',
             top_uas TEXT DEFAULT '{}',
+            top_countries TEXT DEFAULT '{}',
             PRIMARY KEY (bucket_hour, host)
         );
 
@@ -94,6 +135,7 @@ def init_stats_db(db_path):
             error_count INTEGER DEFAULT 0,
             top_paths TEXT DEFAULT '{}',
             top_uas TEXT DEFAULT '{}',
+            top_countries TEXT DEFAULT '{}',
             PRIMARY KEY (bucket_date, host)
         );
 
@@ -106,6 +148,17 @@ def init_stats_db(db_path):
         CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_stats(bucket_date);
     """)
     conn.commit()
+
+    # Migration: add top_countries column to existing tables
+    for table in ('hourly_stats', 'daily_stats'):
+        try:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if 'top_countries' not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN top_countries TEXT DEFAULT '{{}}'")
+                print(f"Stats DB migration: added top_countries to {table}")
+        except Exception as e:
+            print(f"Stats DB migration check for {table}: {e}")
+
     conn.close()
 
 
@@ -292,7 +345,7 @@ def process_new_logs(log_file_path):
                 'total': 0, 'status_1xx': 0, 'status_2xx': 0, 'status_3xx': 0,
                 'status_4xx': 0, 'status_5xx': 0, 'total_duration': 0.0,
                 'total_size': 0, 'error_count': 0,
-                'top_paths': {}, 'top_uas': {},
+                'top_paths': {}, 'top_uas': {}, 'top_countries': {},
             }
 
         b = buckets[key]
@@ -313,21 +366,38 @@ def process_new_logs(log_file_path):
         b['top_paths'][path] = b['top_paths'].get(path, 0) + 1
         b['top_uas'][ua_simple] = b['top_uas'].get(ua_simple, 0) + 1
 
-    # Truncate top paths/UAs per bucket to limit stored size
+        # GeoIP: resolve client IP to country
+        client_ip = request.get('remote_ip', request.get('client_ip', ''))
+        if not client_ip and isinstance(headers, dict):
+            # Fallback: check X-Forwarded-For or X-Real-IP headers
+            xff = headers.get('X-Forwarded-For', [])
+            if xff and isinstance(xff, list) and xff[0]:
+                client_ip = xff[0].split(',')[0].strip()
+            else:
+                xri = headers.get('X-Real-Ip', [])
+                if xri and isinstance(xri, list) and xri[0]:
+                    client_ip = xri[0]
+        country = _resolve_country(client_ip)
+        if country != 'Unknown':
+            b['top_countries'][country] = b['top_countries'].get(country, 0) + 1
+
+    # Truncate top paths/UAs/countries per bucket to limit stored size
     for b in buckets.values():
         b['top_paths'] = _top_n_from_dict(b['top_paths'], TOP_N_PATHS)
         b['top_uas'] = _top_n_from_dict(b['top_uas'], TOP_N_UAS)
+        b['top_countries'] = _top_n_from_dict(b['top_countries'], TOP_N_COUNTRIES)
 
     # Upsert into hourly_stats
     for (bucket_hour, host), data in buckets.items():
         existing = conn.execute(
-            "SELECT top_paths, top_uas FROM hourly_stats WHERE bucket_hour = ? AND host = ?",
+            "SELECT top_paths, top_uas, top_countries FROM hourly_stats WHERE bucket_hour = ? AND host = ?",
             (bucket_hour, host),
         ).fetchone()
 
         if existing:
             merged_paths = _merge_top_json(existing[0], data['top_paths'], TOP_N_PATHS)
             merged_uas = _merge_top_json(existing[1], data['top_uas'], TOP_N_UAS)
+            merged_countries = _merge_top_json(existing[2], data['top_countries'], TOP_N_COUNTRIES)
 
             conn.execute(
                 """UPDATE hourly_stats SET
@@ -335,13 +405,14 @@ def process_new_logs(log_file_path):
                     status_2xx = status_2xx + ?, status_3xx = status_3xx + ?,
                     status_4xx = status_4xx + ?, status_5xx = status_5xx + ?,
                     total_duration = total_duration + ?, total_size = total_size + ?,
-                    error_count = error_count + ?, top_paths = ?, top_uas = ?
+                    error_count = error_count + ?, top_paths = ?, top_uas = ?,
+                    top_countries = ?
                 WHERE bucket_hour = ? AND host = ?""",
                 (
                     data['total'], data['status_1xx'], data['status_2xx'],
                     data['status_3xx'], data['status_4xx'], data['status_5xx'],
                     data['total_duration'], data['total_size'], data['error_count'],
-                    merged_paths, merged_uas, bucket_hour, host,
+                    merged_paths, merged_uas, merged_countries, bucket_hour, host,
                 ),
             )
         else:
@@ -349,8 +420,8 @@ def process_new_logs(log_file_path):
                 """INSERT INTO hourly_stats
                     (bucket_hour, host, total, status_1xx, status_2xx,
                      status_3xx, status_4xx, status_5xx, total_duration,
-                     total_size, error_count, top_paths, top_uas)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     total_size, error_count, top_paths, top_uas, top_countries)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     bucket_hour, host, data['total'], data['status_1xx'],
                     data['status_2xx'], data['status_3xx'], data['status_4xx'],
@@ -358,6 +429,7 @@ def process_new_logs(log_file_path):
                     data['error_count'],
                     json.dumps(data['top_paths']),
                     json.dumps(data['top_uas']),
+                    json.dumps(data['top_countries']),
                 ),
             )
 
@@ -431,7 +503,7 @@ def rollup_old_buckets():
                     'total': 0, 'status_1xx': 0, 'status_2xx': 0, 'status_3xx': 0,
                     'status_4xx': 0, 'status_5xx': 0, 'total_duration': 0.0,
                     'total_size': 0, 'error_count': 0,
-                    'top_paths': {}, 'top_uas': {},
+                    'top_paths': {}, 'top_uas': {}, 'top_countries': {},
                 }
 
             b = daily_buckets[key]
@@ -456,11 +528,17 @@ def rollup_old_buckets():
                     b['top_uas'][ua] = b['top_uas'].get(ua, 0) + count
             except (json.JSONDecodeError, TypeError):
                 pass
+            try:
+                for country, count in json.loads(row[13] or '{}').items():
+                    b['top_countries'][country] = b['top_countries'].get(country, 0) + count
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Upsert daily_stats (REPLACE with freshly computed totals for idempotency)
         for (bucket_date, host), data in daily_buckets.items():
             top_paths_json = json.dumps(_top_n_from_dict(data['top_paths'], TOP_N_PATHS))
             top_uas_json = json.dumps(_top_n_from_dict(data['top_uas'], TOP_N_UAS))
+            top_countries_json = json.dumps(_top_n_from_dict(data['top_countries'], TOP_N_COUNTRIES))
 
             existing = conn.execute(
                 "SELECT total FROM daily_stats WHERE bucket_date = ? AND host = ?",
@@ -472,13 +550,14 @@ def rollup_old_buckets():
                     """UPDATE daily_stats SET
                         total = ?, status_1xx = ?, status_2xx = ?, status_3xx = ?,
                         status_4xx = ?, status_5xx = ?, total_duration = ?,
-                        total_size = ?, error_count = ?, top_paths = ?, top_uas = ?
+                        total_size = ?, error_count = ?, top_paths = ?, top_uas = ?,
+                        top_countries = ?
                     WHERE bucket_date = ? AND host = ?""",
                     (
                         data['total'], data['status_1xx'], data['status_2xx'],
                         data['status_3xx'], data['status_4xx'], data['status_5xx'],
                         data['total_duration'], data['total_size'], data['error_count'],
-                        top_paths_json, top_uas_json, bucket_date, host,
+                        top_paths_json, top_uas_json, top_countries_json, bucket_date, host,
                     ),
                 )
             else:
@@ -486,13 +565,13 @@ def rollup_old_buckets():
                     """INSERT INTO daily_stats
                         (bucket_date, host, total, status_1xx, status_2xx,
                          status_3xx, status_4xx, status_5xx, total_duration,
-                         total_size, error_count, top_paths, top_uas)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         total_size, error_count, top_paths, top_uas, top_countries)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         bucket_date, host, data['total'], data['status_1xx'],
                         data['status_2xx'], data['status_3xx'], data['status_4xx'],
                         data['status_5xx'], data['total_duration'], data['total_size'],
-                        data['error_count'], top_paths_json, top_uas_json,
+                        data['error_count'], top_paths_json, top_uas_json, top_countries_json,
                     ),
                 )
 
@@ -533,6 +612,8 @@ def _empty_stats(period, host):
         "status_codes_dist": {"1xx": 0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, "other": 0},
         "top_paths": [],
         "top_user_agents": [],
+        "top_countries": [],
+        "geoip_available": is_geoip_available(),
         "avg_response_time_ms": 0.0,
         "avg_response_size_kb": 0.0,
         "error_rate_percent": 0.0,
@@ -676,6 +757,7 @@ def get_stats(period='7d', host=None):
     status_codes_dist = {"1xx": 0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, "other": 0}
     path_counts = {}
     ua_counts = {}
+    country_counts = {}
     total_duration = 0.0
     total_size = 0
     error_count = 0
@@ -713,6 +795,11 @@ def get_stats(period='7d', host=None):
                 ua_counts[u] = ua_counts.get(u, 0) + c
         except (json.JSONDecodeError, TypeError):
             pass
+        try:
+            for country, c in json.loads(r.get('top_countries') or '{}').items():
+                country_counts[country] = country_counts.get(country, 0) + c
+        except (json.JSONDecodeError, TypeError):
+            pass
 
         # Timeseries bucket key
         if 'bucket_hour' in r and r['bucket_hour']:
@@ -745,6 +832,10 @@ def get_stats(period='7d', host=None):
         {"agent": u, "count": c}
         for u, c in sorted(ua_counts.items(), key=lambda x: x[1], reverse=True)[:5]
     ]
+    top_countries = [
+        {"country": country, "count": c}
+        for country, c in sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    ]
 
     # Data period label
     if earliest_bucket:
@@ -768,6 +859,8 @@ def get_stats(period='7d', host=None):
         "status_codes_dist": status_codes_dist,
         "top_paths": top_paths,
         "top_user_agents": top_user_agents,
+        "top_countries": top_countries,
+        "geoip_available": is_geoip_available(),
         "avg_response_time_ms": (total_duration / total_requests * 1000) if total_requests else 0,
         "avg_response_size_kb": (total_size / total_requests / 1024) if total_requests else 0,
         "error_rate_percent": (error_count / total_requests * 100) if total_requests else 0,

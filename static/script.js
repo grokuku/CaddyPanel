@@ -64,6 +64,9 @@ const defaultAuthentikOutpostUrlInput = document.getElementById('default-authent
 const defaultAuthentikUriInput = document.getElementById('default-authentik-uri');
 const defaultAuthentikCopyHeadersInput = document.getElementById('default-authentik-copy-headers');
 const defaultAuthentikTrustedProxiesInput = document.getElementById('default-authentik-trusted-proxies');
+const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
+const downloadGeoipBtn = document.getElementById('download-geoip-btn');
+const geoipStatusText = document.getElementById('geoip-status-text');
 
 // --- Global State ---
 let currentPreferences = {};
@@ -111,6 +114,42 @@ if (themeSelect) {
 }
 if (savePrefsBtn) {
     savePrefsBtn.addEventListener('click', savePreferences);
+
+    // GeoIP download button
+    if (downloadGeoipBtn) {
+        downloadGeoipBtn.addEventListener('click', async () => {
+            if (!maxmindLicenseKeyInput || !maxmindLicenseKeyInput.value.trim()) {
+                showToast('Enter a MaxMind license key first.', 'warning');
+                return;
+            }
+            downloadGeoipBtn.disabled = true;
+            downloadGeoipBtn.textContent = 'Downloading...';
+            if (geoipStatusText) geoipStatusText.textContent = 'Downloading GeoIP database...';
+            try {
+                const res = await fetch('/api/geoip/download', { method: 'POST' });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    showToast(result.message, 'success');
+                    if (geoipStatusText) geoipStatusText.textContent = '✓ GeoIP active';
+                } else {
+                    showToast(result.message, 'error', 8000);
+                    if (geoipStatusText) geoipStatusText.textContent = '✗ ' + result.message;
+                }
+            } catch (err) {
+                showToast('Download failed: ' + err.message, 'error');
+                if (geoipStatusText) geoipStatusText.textContent = '✗ Download failed';
+            } finally {
+                downloadGeoipBtn.disabled = false;
+                downloadGeoipBtn.textContent = 'Download GeoIP Database';
+            }
+        });
+    }
+    // Enable download button when license key is entered
+    if (maxmindLicenseKeyInput) {
+        maxmindLicenseKeyInput.addEventListener('input', () => {
+            if (downloadGeoipBtn) downloadGeoipBtn.disabled = !maxmindLicenseKeyInput.value.trim();
+        });
+    }
 }
 if (addHostBtn) {
     addHostBtn.addEventListener('click', () => openSiteModal());
@@ -647,6 +686,7 @@ async function savePreferences() {
     const prefsToSave = { 
         theme: themeSelect.value, 
         globalAdminEmail: globalAdminEmailInput.value.trim(), 
+        maxmindLicenseKey: maxmindLicenseKeyInput ? maxmindLicenseKeyInput.value.trim() : '',
         defaultSkipTlsVerify: defaultSkipTlsVerifyInput.checked, 
         defaultAuthentikEnabled: defaultAuthentikEnabledInput.checked, 
         defaultAuthentikOutpostUrl: defaultAuthentikOutpostUrlInput.value.trim(), 
@@ -704,6 +744,21 @@ async function loadPreferences() {
         if (defaultAuthentikUriInput) defaultAuthentikUriInput.value = currentPreferences.defaultAuthentikUri || "";
         if (defaultAuthentikCopyHeadersInput) defaultAuthentikCopyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || "";
         if (defaultAuthentikTrustedProxiesInput) defaultAuthentikTrustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || "";
+        if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.value = currentPreferences.maxmindLicenseKey || "";
+
+        // Enable/disable GeoIP download button based on key presence
+        if (downloadGeoipBtn) downloadGeoipBtn.disabled = !maxmindLicenseKeyInput.value.trim();
+
+        // Check GeoIP status
+        try {
+            const geoipRes = await fetch('/api/geoip/status');
+            if (geoipRes.ok) {
+                const geoipData = await geoipRes.json();
+                if (geoipStatusText) geoipStatusText.textContent = geoipData.geoip_available ? '✓ GeoIP active' : '✗ Not configured';
+            }
+        } catch (e) {
+            if (geoipStatusText) geoipStatusText.textContent = '';
+        }
 
     } catch (error) {
         console.error('Error loading preferences:', error);

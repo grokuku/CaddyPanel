@@ -6,176 +6,289 @@
     <title>Statistics - CaddyPanel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
     <style>
-        body { margin: 20px; }
-        .stats-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+        /* === Full-viewport layout === */
+        html, body {
+            margin: 0; padding: 0;
+            height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
+
+        .stats-root {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding: 8px 14px;
+            box-sizing: border-box;
+            gap: 8px;
+        }
+
+        /* --- Row 1: Header + Controls --- */
         .stats-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #eee;
+            flex-shrink: 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e0e0e0;
         }
-        .stats-header h1 { margin: 0; }
+        .stats-header h1 { margin: 0; font-size: 1.15em; }
+        .stats-header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85em; }
+        .stats-header-right a { text-decoration: underline; cursor: pointer; }
 
-        /* Controls: period selector + host filter */
         .stats-controls {
             display: flex;
             flex-wrap: wrap;
-            gap: 15px;
+            gap: 8px;
             align-items: center;
-            margin-bottom: 10px;
+            flex-shrink: 0;
         }
-        .period-selector {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-        }
+        .period-selector { display: flex; gap: 3px; }
         .period-btn {
-            padding: 6px 14px;
+            padding: 4px 10px;
             border: 1px solid #ccc;
             border-radius: 4px;
             background: #fff;
             cursor: pointer;
-            font-size: 0.9em;
+            font-size: 0.82em;
             transition: background 0.2s, color 0.2s;
         }
         .period-btn:hover { background: #e9ecef; }
-        .period-btn.active {
-            background: #007bff;
-            color: #fff;
-            border-color: #007bff;
-        }
-        .host-filter {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .host-filter label { font-size: 0.9em; font-weight: bold; }
+        .period-btn.active { background: #007bff; color: #fff; border-color: #007bff; }
+
+        .host-filter { display: flex; align-items: center; gap: 5px; }
+        .host-filter label { font-size: 0.82em; font-weight: bold; }
         .host-filter select {
-            padding: 6px 10px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 0.9em;
-            min-width: 180px;
+            padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+            font-size: 0.82em; min-width: 140px;
         }
-        .data-period {
-            font-size: 0.9em;
-            color: #777;
-            margin-bottom: 15px;
+        .data-period { font-size: 0.78em; color: #777; flex-shrink: 0; }
+
+        /* --- Content grid --- */
+        .stats-body {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1.8fr;
+            grid-template-rows: auto 1fr 1fr;
+            gap: 8px;
         }
 
-        /* Stat cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
+        /* --- Stat cards --- */
         .stat-card {
-            background-color: #fff;
-            padding: 18px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
         .stat-card h3 {
-            margin: 0 0 12px 0;
-            font-size: 1.1em;
-            color: #333;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 8px;
+            margin: 0 0 4px 0;
+            font-size: 0.82em;
+            color: #777;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
         }
-        .stat-card p {
-            font-size: 1.7em;
-            font-weight: bold;
-            margin: 0 0 5px 0;
+        .stat-card .big-value {
+            font-size: 1.5em;
+            font-weight: 700;
             color: #0056b3;
+            line-height: 1.1;
         }
-        .stat-card .details { font-size: 0.85em; color: #666; }
-        .stat-card ul { list-style: none; padding: 0; margin: 0; }
-        .stat-card ul li {
-            display: flex;
-            justify-content: space-between;
-            padding: 4px 0;
-            border-bottom: 1px solid #f0f0f0;
-        }
-        .stat-card ul li:last-child { border-bottom: none; }
-        .stat-card .label {
-            color: #555;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 70%;
-        }
-        .stat-card .value { font-weight: bold; color: #333; }
+        .stat-card .sub-detail { font-size: 0.72em; color: #999; margin-top: 2px; }
 
-        /* Chart container */
-        .chart-container {
-            margin-bottom: 25px;
-            padding: 20px;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            position: relative;
-            height: 350px;
+        /* KPI row — 4 small cards */
+        .kpi-row {
+            grid-column: 1 / 3;
+            grid-row: 1;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
         }
-        .chart-container h3 { margin-top: 0; }
+        .kpi-card {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 10px 14px;
+        }
+        .kpi-card h3 {
+            margin: 0 0 2px 0; font-size: 0.72em; color: #888;
+            text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .kpi-card .big-value {
+            font-size: 1.4em; font-weight: 700; color: #0056b3; line-height: 1.1;
+        }
+
+        /* Countries card */
+        .countries-card {
+            grid-column: 3;
+            grid-row: 1 / 3;
+        }
+        .countries-card .countries-list {
+            list-style: none; padding: 0; margin: 6px 0 0 0;
+        }
+        .countries-card .countries-list li {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 3px 0; border-bottom: 1px solid #f0f0f0;
+            font-size: 0.82em;
+        }
+        .countries-card .countries-list li:last-child { border-bottom: none; }
+        .country-label { display: flex; align-items: center; gap: 6px; color: #555; }
+        .country-flag { font-size: 1.1em; }
+        .country-value { font-weight: 600; color: #333; }
+        .country-bar-bg { width: 60px; height: 5px; background: #eee; border-radius: 3px; margin-left: 6px; }
+        .country-bar { height: 5px; background: #007bff; border-radius: 3px; transition: width 0.4s; }
+        .geoip-unavailable { color: #999; font-size: 0.8em; font-style: italic; }
+
+        /* World map card */
+        .map-card {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+        .map-card h3 {
+            margin: 0 0 4px 0; font-size: 0.82em; color: #777;
+            text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        #world-map-svg {
+            flex: 1;
+            width: 100%;
+            min-height: 0;
+        }
+        .map-tooltip {
+            position: absolute;
+            padding: 5px 10px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            font-size: 0.8em;
+            border-radius: 4px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 100;
+        }
+        .map-no-data {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: #aaa; font-size: 0.9em; font-style: italic;
+        }
+
+        /* List cards (hosts, status, paths, uas) */
+        .list-card ul { list-style: none; padding: 0; margin: 4px 0 0 0; overflow-y: auto; flex: 1; }
+        .list-card ul li {
+            display: flex; justify-content: space-between; padding: 2px 0;
+            border-bottom: 1px solid #f0f0f0; font-size: 0.78em;
+        }
+        .list-card ul li:last-child { border-bottom: none; }
+        .list-card .label {
+            color: #555; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; max-width: 68%;
+        }
+        .list-card .value { font-weight: 600; color: #333; white-space: nowrap; }
+
+        /* Chart card */
+        .chart-card {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chart-card h3 { margin: 0 0 2px 0; font-size: 0.82em; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
+        .chart-card canvas { flex: 1; min-height: 0; }
+
+        /* Status codes inline */
+        .status-row {
+            display: flex; gap: 2px; margin-top: 4px; height: 8px; border-radius: 4px; overflow: hidden;
+        }
+        .status-segment { height: 8px; transition: width 0.4s; min-width: 2px; }
+        .status-2xx { background: #28a745; }
+        .status-3xx { background: #17a2b8; }
+        .status-4xx { background: #ffc107; }
+        .status-5xx { background: #dc3545; }
+        .status-1xx { background: #6c757d; }
+
+        .status-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: 0.75em; }
+        .status-legend-item { display: flex; align-items: center; gap: 3px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
 
         /* Messages */
         #loading-message, #log-config-action-area {
-            text-align: center;
-            font-size: 1.2em;
-            padding: 20px;
-            border: 1px dashed #ccc;
-            margin-bottom: 20px;
-            border-radius: 4px;
+            text-align: center; font-size: 1em; padding: 12px;
+            border: 1px dashed #ccc; border-radius: 4px; flex-shrink: 0;
         }
-        #log-config-action-area button { margin-top: 10px; }
+        #log-config-action-area button { margin-top: 6px; }
 
-        /* ===== Dark theme overrides ===== */
+        /* ===== Dark themes ===== */
+        body.theme-dark-blue, body.theme-dark-green, body.theme-dark-violet,
+        body.theme-dark-orange, body.theme-dark-gray {
+            background: #1e1e1e; color: #ddd;
+        }
+
         body.theme-dark-blue .stats-header, body.theme-dark-green .stats-header,
         body.theme-dark-violet .stats-header, body.theme-dark-orange .stats-header,
         body.theme-dark-gray .stats-header { border-bottom-color: #444; }
 
         body.theme-dark-blue .stat-card, body.theme-dark-green .stat-card,
         body.theme-dark-violet .stat-card, body.theme-dark-orange .stat-card,
-        body.theme-dark-gray .stat-card { background-color: #2b2b2b; }
+        body.theme-dark-gray .stat-card,
+        body.theme-dark-blue .kpi-card, body.theme-dark-green .kpi-card,
+        body.theme-dark-violet .kpi-card, body.theme-dark-orange .kpi-card,
+        body.theme-dark-gray .kpi-card,
+        body.theme-dark-blue .chart-card, body.theme-dark-green .chart-card,
+        body.theme-dark-violet .chart-card, body.theme-dark-orange .chart-card,
+        body.theme-dark-gray .chart-card,
+        body.theme-dark-blue .map-card, body.theme-dark-green .map-card,
+        body.theme-dark-violet .map-card, body.theme-dark-orange .map-card,
+        body.theme-dark-gray .map-card {
+            background-color: #2b2b2b;
+        }
+
         body.theme-dark-blue .stat-card h3, body.theme-dark-green .stat-card h3,
         body.theme-dark-violet .stat-card h3, body.theme-dark-orange .stat-card h3,
-        body.theme-dark-gray .stat-card h3 { color: #ccc; border-bottom-color: #444; }
-        body.theme-dark-blue .stat-card p { color: #45aadd; }
-        body.theme-dark-green .stat-card p { color: #8fbc8f; }
-        body.theme-dark-violet .stat-card p { color: #c390f0; }
-        body.theme-dark-orange .stat-card p { color: #ffb766; }
-        body.theme-dark-gray .stat-card p { color: #bbb; }
-        body.theme-dark-blue .stat-card .label, body.theme-dark-green .stat-card .label,
-        body.theme-dark-violet .stat-card .label, body.theme-dark-orange .stat-card .label,
-        body.theme-dark-gray .stat-card .label { color: #aaa; }
-        body.theme-dark-blue .stat-card .value, body.theme-dark-green .stat-card .value,
-        body.theme-dark-violet .stat-card .value, body.theme-dark-orange .stat-card .value,
-        body.theme-dark-gray .stat-card .value { color: #ddd; }
-        body.theme-dark-blue .stat-card ul li, body.theme-dark-green .stat-card ul li,
-        body.theme-dark-violet .stat-card ul li, body.theme-dark-orange .stat-card ul li,
-        body.theme-dark-gray .stat-card ul li { border-bottom-color: #3f3f3f; }
-        body.theme-dark-blue .chart-container, body.theme-dark-green .chart-container,
-        body.theme-dark-violet .chart-container, body.theme-dark-orange .chart-container,
-        body.theme-dark-gray .chart-container { background-color: #2b2b2b; }
-        body.theme-dark-blue .data-period, body.theme-dark-green .data-period,
-        body.theme-dark-violet .data-period, body.theme-dark-orange .data-period,
-        body.theme-dark-gray .data-period { color: #aaa; }
-        body.theme-dark-blue #loading-message, body.theme-dark-green #loading-message,
-        body.theme-dark-violet #loading-message, body.theme-dark-orange #loading-message,
-        body.theme-dark-gray #loading-message,
-        body.theme-dark-blue #log-config-action-area, body.theme-dark-green #log-config-action-area,
-        body.theme-dark-violet #log-config-action-area, body.theme-dark-orange #log-config-action-area,
-        body.theme-dark-gray #log-config-action-area { border-color: #555; }
+        body.theme-dark-gray .stat-card h3,
+        body.theme-dark-blue .kpi-card h3, body.theme-dark-green .kpi-card h3,
+        body.theme-dark-violet .kpi-card h3, body.theme-dark-orange .kpi-card h3,
+        body.theme-dark-gray .kpi-card h3,
+        body.theme-dark-blue .chart-card h3, body.theme-dark-green .chart-card h3,
+        body.theme-dark-violet .chart-card h3, body.theme-dark-orange .chart-card h3,
+        body.theme-dark-gray .chart-card h3,
+        body.theme-dark-blue .map-card h3, body.theme-dark-green .map-card h3,
+        body.theme-dark-violet .map-card h3, body.theme-dark-orange .map-card h3,
+        body.theme-dark-gray .map-card h3 {
+            color: #aaa;
+        }
 
-        /* Dark buttons + host filter */
+        body.theme-dark-blue .kpi-card .big-value { color: #45aadd; }
+        body.theme-dark-green .kpi-card .big-value { color: #8fbc8f; }
+        body.theme-dark-violet .kpi-card .big-value { color: #c390f0; }
+        body.theme-dark-orange .kpi-card .big-value { color: #ffb766; }
+        body.theme-dark-gray .kpi-card .big-value { color: #bbb; }
+
+        body.theme-dark-blue .stat-card .big-value { color: #45aadd; }
+        body.theme-dark-green .stat-card .big-value { color: #8fbc8f; }
+        body.theme-dark-violet .stat-card .big-value { color: #c390f0; }
+        body.theme-dark-orange .stat-card .big-value { color: #ffb766; }
+        body.theme-dark-gray .stat-card .big-value { color: #bbb; }
+
+        body.theme-dark-blue .list-card .label, body.theme-dark-green .list-card .label,
+        body.theme-dark-violet .list-card .label, body.theme-dark-orange .list-card .label,
+        body.theme-dark-gray .list-card .label { color: #aaa; }
+        body.theme-dark-blue .list-card .value, body.theme-dark-green .list-card .value,
+        body.theme-dark-violet .list-card .value, body.theme-dark-orange .list-card .value,
+        body.theme-dark-gray .list-card .value { color: #ddd; }
+        body.theme-dark-blue .list-card ul li, body.theme-dark-green .list-card ul li,
+        body.theme-dark-violet .list-card ul li, body.theme-dark-orange .list-card ul li,
+        body.theme-dark-gray .list-card ul li { border-bottom-color: #3f3f3f; }
+
         body.theme-dark-blue .period-btn, body.theme-dark-green .period-btn,
         body.theme-dark-violet .period-btn, body.theme-dark-orange .period-btn,
         body.theme-dark-gray .period-btn {
@@ -184,13 +297,12 @@
         body.theme-dark-blue .period-btn:hover, body.theme-dark-green .period-btn:hover,
         body.theme-dark-violet .period-btn:hover, body.theme-dark-orange .period-btn:hover,
         body.theme-dark-gray .period-btn:hover { background: #3c3c3c; }
-        body.theme-dark-blue .period-btn.active, body.theme-dark-green .period-btn.active,
-        body.theme-dark-violet .period-btn.active, body.theme-dark-orange .period-btn.active,
-        body.theme-dark-gray .period-btn.active { background: #457b9d; color: #f1faee; border-color: #457b9d; }
+        body.theme-dark-blue .period-btn.active { background: #457b9d; color: #f1faee; border-color: #457b9d; }
         body.theme-dark-green .period-btn.active { background: #52796f; color: #fff; border-color: #52796f; }
         body.theme-dark-violet .period-btn.active { background: #7b2cbf; color: #f4e8ff; border-color: #7b2cbf; }
         body.theme-dark-orange .period-btn.active { background: #cc6600; color: #fff0e0; border-color: #cc6600; }
         body.theme-dark-gray .period-btn.active { background: #555; color: #e0e0e0; border-color: #555; }
+
         body.theme-dark-blue .host-filter select, body.theme-dark-green .host-filter select,
         body.theme-dark-violet .host-filter select, body.theme-dark-orange .host-filter select,
         body.theme-dark-gray .host-filter select {
@@ -199,103 +311,189 @@
         body.theme-dark-blue .host-filter label, body.theme-dark-green .host-filter label,
         body.theme-dark-violet .host-filter label, body.theme-dark-orange .host-filter label,
         body.theme-dark-gray .host-filter label { color: #aaa; }
+
+        body.theme-dark-blue .data-period, body.theme-dark-green .data-period,
+        body.theme-dark-violet .data-period, body.theme-dark-orange .data-period,
+        body.theme-dark-gray .data-period { color: #888; }
+
+        body.theme-dark-blue #loading-message, body.theme-dark-green #loading-message,
+        body.theme-dark-violet #loading-message, body.theme-dark-orange #loading-message,
+        body.theme-dark-gray #loading-message,
+        body.theme-dark-blue #log-config-action-area, body.theme-dark-green #log-config-action-area,
+        body.theme-dark-violet #log-config-action-area, body.theme-dark-orange #log-config-action-area,
+        body.theme-dark-gray #log-config-action-area { border-color: #555; }
+
+        body.theme-dark-blue .country-label, body.theme-dark-green .country-label,
+        body.theme-dark-violet .country-label, body.theme-dark-orange .country-label,
+        body.theme-dark-gray .country-label { color: #bbb; }
+        body.theme-dark-blue .country-value, body.theme-dark-green .country-value,
+        body.theme-dark-violet .country-value, body.theme-dark-orange .country-value,
+        body.theme-dark-gray .country-value { color: #ddd; }
+        body.theme-dark-blue .country-bar-bg, body.theme-dark-green .country-bar-bg,
+        body.theme-dark-violet .country-bar-bg, body.theme-dark-orange .country-bar-bg,
+        body.theme-dark-gray .country-bar-bg { background: #3f3f3f; }
+        body.theme-dark-blue .country-bar { background: #45aadd; }
+        body.theme-dark-green .country-bar { background: #8fbc8f; }
+        body.theme-dark-violet .country-bar { background: #7b2cbf; }
+        body.theme-dark-orange .country-bar { background: #cc6600; }
+        body.theme-dark-gray .country-bar { background: #666; }
+
+        body.theme-dark-blue .geoip-unavailable, body.theme-dark-green .geoip-unavailable,
+        body.theme-dark-violet .geoip-unavailable, body.theme-dark-orange .geoip-unavailable,
+        body.theme-dark-gray .geoip-unavailable { color: #666; }
     </style>
 </head>
 <body>
     <div id="toast-container"></div>
-    <div class="stats-container">
+    <div class="stats-root">
+        <!-- Header -->
         <div class="stats-header">
             <h1 id="page-title">Global Statistics</h1>
-            <div style="text-align: right;">
-                Logged in as: <strong>{{ username }}</strong> |
-                <a href="{{ url_for('index') }}">Main Config</a> |
+            <div class="stats-header-right">
+                <span>Logged in as: <strong>{{ username }}</strong></span>
+                <a href="{{ url_for('index') }}">Config</a>
                 <a href="{{ url_for('logout') }}">Logout</a>
             </div>
         </div>
 
+        <!-- Controls -->
         <div class="stats-controls">
             <div class="period-selector">
                 <button class="period-btn" data-period="24h">24h</button>
-                <button class="period-btn active" data-period="7d">7 Days</button>
-                <button class="period-btn" data-period="30d">30 Days</button>
-                <button class="period-btn" data-period="90d">90 Days</button>
-                <button class="period-btn" data-period="1y">1 Year</button>
+                <button class="period-btn active" data-period="7d">7d</button>
+                <button class="period-btn" data-period="30d">30d</button>
+                <button class="period-btn" data-period="90d">90d</button>
+                <button class="period-btn" data-period="1y">1y</button>
             </div>
             <div class="host-filter">
                 <label for="host-select">Host:</label>
-                <select id="host-select">
-                    <option value="">All Hosts</option>
-                </select>
+                <select id="host-select"><option value="">All Hosts</option></select>
             </div>
+            <span id="data-period-display" class="data-period"></span>
         </div>
 
-        <div id="data-period-display" class="data-period"></div>
-
+        <!-- Messages -->
         <div id="loading-message">Loading statistics...</div>
-        <div id="log-config-action-area" style="display: none;">
+        <div id="log-config-action-area" style="display:none;">
             <p id="log-config-message"></p>
-            <button type="button" id="configure-logging-btn">Attempt to Configure Caddy Logging</button>
+            <button type="button" id="configure-logging-btn">Configure Caddy Logging</button>
         </div>
 
-        <div id="stats-content" style="display: none;">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Total Requests</h3>
-                    <p id="total-requests">-</p>
+        <!-- Main content grid -->
+        <div id="stats-content" class="stats-body" style="display:none;">
+
+            <!-- Row 1: KPIs (left) + Top Countries (right) -->
+            <div class="kpi-row">
+                <div class="kpi-card">
+                    <h3>Requests</h3>
+                    <div class="big-value" id="total-requests">-</div>
                 </div>
-                <div class="stat-card">
+                <div class="kpi-card">
                     <h3>Error Rate</h3>
-                    <p id="error-rate">- %</p>
+                    <div class="big-value" id="error-rate">-%</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Avg. Response Time</h3>
-                    <p id="avg-response-time">- ms</p>
+                <div class="kpi-card">
+                    <h3>Avg. Time</h3>
+                    <div class="big-value" id="avg-response-time">- ms</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Avg. Response Size</h3>
-                    <p id="avg-response-size">- KB</p>
-                </div>
-            </div>
-
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Requests by Host</h3>
-                    <ul id="requests-by-host"></ul>
-                </div>
-                <div class="stat-card">
-                    <h3>Status Codes</h3>
-                    <ul id="status-codes-dist"></ul>
-                </div>
-            </div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Top Paths</h3>
-                    <ul id="top-paths"></ul>
-                </div>
-                <div class="stat-card">
-                    <h3>Top User Agents</h3>
-                    <ul id="top-user-agents"></ul>
+                <div class="kpi-card">
+                    <h3>Avg. Size</h3>
+                    <div class="big-value" id="avg-response-size">- KB</div>
                 </div>
             </div>
 
-            <div class="chart-container">
+            <div class="stat-card countries-card">
+                <h3>Top Countries</h3>
+                <div id="countries-content">
+                    <ul class="countries-list" id="top-countries-list"></ul>
+                </div>
+            </div>
+
+            <!-- Row 2: Status (left) + Hosts (center) + World Map (right, spans row 2) -->
+            <div class="stat-card list-card">
+                <h3>Status Codes</h3>
+                <div class="status-row" id="status-bar"></div>
+                <div class="status-legend" id="status-legend"></div>
+            </div>
+
+            <div class="stat-card list-card">
+                <h3>Requests by Host</h3>
+                <ul id="requests-by-host"></ul>
+            </div>
+
+            <!-- Row 3: Top Paths (left) + Top UAs (center) + Chart (right) -->
+            <div class="stat-card list-card">
+                <h3>Top Paths</h3>
+                <ul id="top-paths"></ul>
+            </div>
+
+            <div class="stat-card list-card">
+                <h3>User Agents</h3>
+                <ul id="top-user-agents"></ul>
+            </div>
+
+            <div class="chart-card">
                 <h3 id="chart-title">Requests per Hour</h3>
                 <canvas id="requests-timeseries-chart"></canvas>
             </div>
         </div>
     </div>
 
+    <!-- World map (rendered separately below the grid for layering) -->
+    <div id="map-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:50;">
+        <div id="map-container" style="position:absolute; pointer-events:auto;"></div>
+    </div>
+
+    <div class="map-tooltip" id="map-tooltip"></div>
+
     <script>
         // --- State ---
         let currentPeriod = '7d';
         let currentHost = null;
 
-        // --- Read URL params on load ---
+        // --- URL params ---
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('period')) currentPeriod = urlParams.get('period');
         if (urlParams.has('host'))   currentHost  = urlParams.get('host') || null;
 
-        // --- Toast (standalone for this page) ---
+        // --- Country code → flag emoji ---
+        function countryFlag(code) {
+            if (!code || code === 'Unknown' || code.length !== 2) return '🌍';
+            const base = 0x1F1E6;
+            const c1 = code.charCodeAt(0) - 65;
+            const c2 = code.charCodeAt(1) - 65;
+            if (c1 < 0 || c1 > 25 || c2 < 0 || c2 > 25) return '🌍';
+            return String.fromCodePoint(base + c1, base + 0x1F1E6 + c2);
+        }
+
+        // --- ISO country code → name (most common) ---
+        const COUNTRY_NAMES = {
+            AF:'Afghanistan',AL:'Albania',DZ:'Algeria',AD:'Andorra',AO:'Angola',AG:'Antigua',AR:'Argentina',AM:'Armenia',
+            AU:'Australia',AT:'Austria',AZ:'Azerbaijan',BS:'Bahamas',BH:'Bahrain',BD:'Bangladesh',BY:'Belarus',BE:'Belgium',
+            BZ:'Belize',BJ:'Benin',BO:'Bolivia',BA:'Bosnia',BW:'Botswana',BR:'Brazil',BN:'Brunei',BG:'Bulgaria',
+            BF:'Burkina Faso',BI:'Burundi',KH:'Cambodia',CM:'Cameroon',CA:'Canada',CV:'Cape Verde',CF:'Cent. Africa',
+            TD:'Chad',CL:'Chile',CN:'China',CO:'Colombia',CD:'Congo (DRC)',CR:'Costa Rica',HR:'Croatia',CU:'Cuba',
+            CY:'Cyprus',CZ:'Czechia',DK:'Denmark',DJ:'Djibouti',DO:'Dominican Rep.',EC:'Ecuador',EG:'Egypt',SV:'El Salvador',
+            EE:'Estonia',ET:'Ethiopia',FI:'Finland',FR:'France',GA:'Gabon',GE:'Georgia',DE:'Germany',GH:'Ghana',
+            GR:'Greece',GT:'Guatemala',GN:'Guinea',HT:'Haiti',HN:'Honduras',HU:'Hungary',IS:'Iceland',IN:'India',
+            ID:'Indonesia',IR:'Iran',IQ:'Iraq',IE:'Ireland',IL:'Israel',IT:'Italy',JM:'Jamaica',JP:'Japan',
+            JO:'Jordan',KZ:'Kazakhstan',KE:'Kenya',KR:'Korea (South)',KW:'Kuwait',LV:'Latvia',LB:'Lebanon',
+            LY:'Libya',LT:'Lithuania',LU:'Luxembourg',MG:'Madagascar',MY:'Malaysia',ML:'Mali',MT:'Malta',
+            MX:'Mexico',MD:'Moldova',MA:'Morocco',MZ:'Mozambique',MM:'Myanmar',NA:'Namibia',NP:'Nepal',
+            NL:'Netherlands',NZ:'New Zealand',NI:'Nicaragua',NE:'Niger',NG:'Nigeria',MK:'North Macedonia',
+            NO:'Norway',OM:'Oman',PK:'Pakistan',PA:'Panama',PY:'Paraguay',PE:'Peru',PH:'Philippines',PL:'Poland',
+            PT:'Portugal',QA:'Qatar',RO:'Romania',RU:'Russia',RW:'Rwanda',SA:'Saudi Arabia',SN:'Senegal',
+            RS:'Serbia',SG:'Singapore',SK:'Slovakia',SI:'Slovenia',SO:'Somalia',ZA:'South Africa',ES:'Spain',
+            LK:'Sri Lanka',SD:'Sudan',SE:'Sweden',CH:'Switzerland',SY:'Syria',TW:'Taiwan',TJ:'Tajikistan',
+            TZ:'Tanzania',TH:'Thailand',TN:'Tunisia',TR:'Turkey',TM:'Turkmenistan',UG:'Uganda',UA:'Ukraine',
+            AE:'UAE',GB:'United Kingdom',US:'United States',UY:'Uruguay',UZ:'Uzbekistan',VE:'Venezuela',
+            VN:'Vietnam',YE:'Yemen',ZM:'Zambia',ZW:'Zimbabwe'
+        };
+        function countryName(code) {
+            return COUNTRY_NAMES[code] || code;
+        }
+
+        // --- Toast ---
         function showToast(message, type = 'info', duration = 5000) {
             const c = document.getElementById('toast-container');
             if (!c) { alert(message); return; }
@@ -318,33 +516,28 @@
             document.body.classList.add(s || 'theme-light-gray');
         }
 
-        // --- Populate host dropdown ---
+        // --- Load hosts ---
         async function loadHosts() {
             try {
                 const res = await fetch("{{ url_for('get_stats_hosts') }}");
                 if (!res.ok) return;
                 const hosts = await res.json();
                 const sel = document.getElementById('host-select');
-                // Keep existing "All Hosts" option, add API hosts
                 hosts.forEach(h => {
                     if (!sel.querySelector(`option[value="${CSS.escape(h)}"]`)) {
                         const opt = document.createElement('option');
-                        opt.value = h; opt.textContent = h;
-                        sel.appendChild(opt);
+                        opt.value = h; opt.textContent = h; sel.appendChild(opt);
                     }
                 });
-                // If URL has host param, add it even if not in API response yet
                 if (currentHost && !sel.querySelector(`option[value="${CSS.escape(currentHost)}"]`)) {
                     const opt = document.createElement('option');
-                    opt.value = currentHost; opt.textContent = currentHost;
-                    sel.appendChild(opt);
+                    opt.value = currentHost; opt.textContent = currentHost; sel.appendChild(opt);
                 }
-                // Set selection
                 sel.value = currentHost || '';
             } catch (e) { console.error('Error loading hosts:', e); }
         }
 
-        // --- Set active period button ---
+        // --- Period buttons ---
         function setActivePeriod(period) {
             currentPeriod = period;
             document.querySelectorAll('.period-btn').forEach(btn => {
@@ -352,21 +545,15 @@
             });
         }
 
-        // --- Update chart title ---
         function updateChartTitle(period) {
             const title = document.getElementById('chart-title');
-            if (period === '24h' || period === '7d') {
-                title.textContent = 'Requests per Hour';
-            } else {
-                title.textContent = 'Requests per Day';
-            }
+            title.textContent = (period === '24h' || period === '7d') ? 'Requests per Hour' : 'Requests per Day';
         }
 
-        // --- Update page title ---
         function updatePageTitle(host) {
             const h1 = document.getElementById('page-title');
             if (host) {
-                h1.textContent = `Statistics for ${host}`;
+                h1.textContent = `Stats — ${host}`;
                 document.title = `Stats - ${host} - CaddyPanel`;
             } else {
                 h1.textContent = 'Global Statistics';
@@ -374,7 +561,7 @@
             }
         }
 
-        // --- Populate a <ul> list ---
+        // --- Populate list ---
         function populateList(ulId, data, defaultText = 'No data.') {
             const ul = document.getElementById(ulId);
             ul.innerHTML = '';
@@ -383,42 +570,214 @@
                 items.forEach(item => {
                     const li = document.createElement('li');
                     let label, value;
-                    if (Array.isArray(item)) {
-                        label = item[0]; value = item[1];
-                    } else {
-                        label = item.path || item.agent || 'Unknown';
-                        value = item.count;
-                    }
+                    if (Array.isArray(item)) { label = item[0]; value = item[1]; }
+                    else { label = item.path || item.agent || 'Unknown'; value = item.count; }
                     li.innerHTML = `<span class="label" title="${label}">${label}</span> <span class="value">${value.toLocaleString()}</span>`;
                     ul.appendChild(li);
                 });
             } else {
-                ul.innerHTML = `<li>${defaultText}</li>`;
+                ul.innerHTML = `<li class="label">${defaultText}</li>`;
             }
         }
 
-        // --- Render chart ---
+        // --- Status bar + legend ---
+        function renderStatusBar(dist) {
+            const bar = document.getElementById('status-bar');
+            const legend = document.getElementById('status-legend');
+            bar.innerHTML = '';
+            legend.innerHTML = '';
+            const total = Object.values(dist).reduce((a,b) => a+b, 0);
+            if (!total) { bar.innerHTML = '<div style="width:100%;background:#eee;height:8px;border-radius:4px;"></div>'; return; }
+            const codes = ['1xx','2xx','3xx','4xx','5xx'];
+            codes.forEach(code => {
+                const count = dist[code] || 0;
+                const pct = (count / total * 100);
+                if (count > 0) {
+                    const seg = document.createElement('div');
+                    seg.className = `status-segment status-${code}`;
+                    seg.style.width = `${pct}%`;
+                    bar.appendChild(seg);
+                }
+                const item = document.createElement('span');
+                item.className = 'status-legend-item';
+                item.innerHTML = `<span class="status-dot status-${code}"></span>${code}: ${count.toLocaleString()} (${pct.toFixed(1)}%)`;
+                legend.appendChild(item);
+            });
+        }
+
+        // --- Countries list ---
+        function renderCountries(countries) {
+            const ul = document.getElementById('top-countries-list');
+            const content = document.getElementById('countries-content');
+            ul.innerHTML = '';
+            if (!countries || countries.length === 0) {
+                ul.innerHTML = '<li class="geoip-unavailable">No country data available</li>';
+                return;
+            }
+            const maxCount = countries[0]?.count || 1;
+            countries.slice(0, 5).forEach(c => {
+                const li = document.createElement('li');
+                const pct = (c.count / maxCount * 100).toFixed(0);
+                li.innerHTML = `
+                    <span class="country-label">
+                        <span class="country-flag">${countryFlag(c.country)}</span>
+                        ${countryName(c.country)}
+                    </span>
+                    <span style="display:flex;align-items:center;">
+                        <span class="country-value">${c.count.toLocaleString()}</span>
+                        <span class="country-bar-bg"><span class="country-bar" style="width:${pct}%"></span></span>
+                    </span>`;
+                ul.appendChild(li);
+            });
+        }
+
+        // --- World map (D3 + TopoJSON) ---
+        let worldMapRendered = false;
+        let mapSvg = null;
+        let countryPaths = null;
+
+        async function renderWorldMap(countryData) {
+            const mapCard = document.querySelector('.countries-card');
+            // Remove any old map container inside the countries card
+            let mapDiv = document.getElementById('world-map-container');
+            if (!mapDiv) {
+                mapDiv = document.createElement('div');
+                mapDiv.id = 'world-map-container';
+                mapDiv.style.cssText = 'flex:1;min-height:0;margin-top:6px;';
+                document.getElementById('countries-content').after(mapDiv);
+            }
+            // Clear previous SVG
+            mapDiv.innerHTML = '';
+
+            if (!countryData || countryData.length === 0) {
+                mapDiv.innerHTML = '<div class="map-no-data">No geographic data</div>';
+                return;
+            }
+
+            try {
+                const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+                const countries = topojson.feature(world, world.objects.countries);
+                const borders = topojson.mesh(world, world.objects.countries, (a, b) => a !== b);
+
+                // Build a lookup: ISO numeric → count
+                // world-atlas uses numeric IDs; we need to map ISO A2 → numeric
+                // The features have .id which is the ISO 3166-1 numeric code (as string)
+                const countMap = {};
+                const maxCount = countryData[0]?.count || 1;
+                countryData.forEach(c => { countMap[c.country] = c.count; });
+
+                // ISO A2 → numeric mapping (common countries)
+                const A2_TO_NUMERIC = {
+                    AF:'004',AL:'008',DZ:'012',AD:'020',AO:'024',AG:'028',AR:'032',AM:'051',
+                    AU:'036',AT:'040',AZ:'031',BS:'044',BH:'048',BD:'050',BY:'112',BE:'056',
+                    BZ:'084',BJ:'204',BO:'068',BA:'070',BW:'072',BR:'076',BN:'096',BG:'100',
+                    BF:'854',BI:'108',KH:'116',CM:'120',CA:'124',CV:'132',CF:'140',TD:'148',
+                    CL:'152',CN:'156',CO:'170',CD:'180',CR:'188',HR:'191',CU:'192',CY:'196',
+                    CZ:'203',DK:'208',DJ:'262',DO:'214',EC:'218',EG:'818',SV:'222',EE:'233',
+                    ET:'231',FI:'246',FR:'250',GA:'266',GE:'268',DE:'276',GH:'288',GR:'300',
+                    GT:'320',GN:'324',HT:'332',HN:'340',HU:'348',IS:'352',IN:'356',ID:'360',
+                    IR:'364',IQ:'368',IE:'372',IL:'376',IT:'380',JM:'388',JP:'392',JO:'400',
+                    KZ:'398',KE:'404',KR:'410',KW:'414',LV:'428',LB:'422',LY:'434',LT:'440',
+                    LU:'442',MG:'450',MY:'458',ML:'466',MT:'470',MX:'484',MD:'498',MA:'504',
+                    MZ:'508',MM:'104',NA:'516',NP:'524',NL:'528',NZ:'554',NI:'558',NE:'562',
+                    NG:'566',MK:'807',NO:'578',OM:'512',PK:'586',PA:'591',PY:'600',PE:'604',
+                    PH:'608',PL:'616',PT:'620',QA:'634',RO:'642',RU:'643',RW:'646',SA:'682',
+                    SN:'686',RS:'688',SG:'702',SK:'703',SI:'705',SO:'706',ZA:'710',ES:'724',
+                    LK:'144',SD:'729',SE:'752',CH:'756',SY:'760',TW:'158',TJ:'762',TZ:'834',
+                    TH:'764',TN:'788',TR:'792',TM:'795',UG:'800',UA:'804',AE:'784',GB:'826',
+                    US:'840',UY:'858',UZ:'860',VE:'862',VN:'704',YE:'887',ZM:'894',ZW:'716',
+                    IL:'376',PS:'275',IO:'086'
+                };
+
+                const countByNumeric = {};
+                countryData.forEach(c => {
+                    const num = A2_TO_NUMERIC[c.country];
+                    if (num) countByNumeric[num] = c.count;
+                });
+
+                const isDark = Array.from(document.body.classList).some(c => c.startsWith('theme-dark-'));
+                const landColor = isDark ? '#3a3a3a' : '#e0e0e0';
+                const borderCol = isDark ? '#555' : '#fff';
+                const oceanCol  = isDark ? '#1e1e1e' : '#f5f5f5';
+
+                const width = mapDiv.clientWidth || 300;
+                const height = mapDiv.clientHeight || 150;
+
+                const projection = d3.geoNaturalEarth1()
+                    .fitSize([width, height], countries)
+                    .precision(0.1);
+
+                const path = d3.geoPath(projection);
+
+                const svg = d3.select(mapDiv).append('svg')
+                    .attr('id', 'world-map-svg')
+                    .attr('width', width)
+                    .attr('height', height)
+                    .style('display', 'block');
+
+                // Ocean background
+                svg.append('rect').attr('width', width).attr('height', height).attr('fill', oceanCol);
+
+                // Color scale
+                const colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
+                    .domain([0, maxCount || 1]);
+
+                // Country paths
+                const tooltip = document.getElementById('map-tooltip');
+
+                svg.selectAll('path.country')
+                    .data(countries.features)
+                    .enter()
+                    .append('path')
+                    .attr('class', 'country')
+                    .attr('d', path)
+                    .attr('fill', d => {
+                        const cnt = countByNumeric[d.id];
+                        return cnt ? colorScale(cnt) : landColor;
+                    })
+                    .attr('stroke', borderCol)
+                    .attr('stroke-width', 0.3)
+                    .on('mouseover', function(event, d) {
+                        const cnt = countByNumeric[d.id];
+                        if (cnt) {
+                            d3.select(this).attr('stroke', isDark ? '#aaa' : '#333').attr('stroke-width', 1);
+                            tooltip.textContent = `${d.properties?.name || d.id}: ${cnt.toLocaleString()} requests`;
+                            tooltip.style.opacity = 1;
+                        }
+                    })
+                    .on('mousemove', function(event) {
+                        tooltip.style.left = (event.pageX + 12) + 'px';
+                        tooltip.style.top = (event.pageY - 20) + 'px';
+                    })
+                    .on('mouseout', function(event, d) {
+                        d3.select(this).attr('stroke', borderCol).attr('stroke-width', 0.3);
+                        tooltip.style.opacity = 0;
+                    });
+
+                // Borders
+                svg.append('path')
+                    .datum(borders)
+                    .attr('fill', 'none')
+                    .attr('stroke', borderCol)
+                    .attr('stroke-width', 0.4)
+                    .attr('d', path);
+
+            } catch (e) {
+                console.error('World map render error:', e);
+                mapDiv.innerHTML = '<div class="map-no-data">Map unavailable</div>';
+            }
+        }
+
+        // --- Chart ---
         function renderChart(canvas, timeseries, period) {
             let existing = Chart.getChart(canvas);
             if (existing) existing.destroy();
 
             if (!timeseries || timeseries.length === 0) {
                 canvas.style.display = 'none';
-                const parent = canvas.closest('.chart-container');
-                if (parent && !parent.querySelector('.no-chart-data-msg')) {
-                    const p = document.createElement('p');
-                    p.textContent = 'No timeseries data available.';
-                    p.style.textAlign = 'center';
-                    p.classList.add('no-chart-data-msg');
-                    parent.appendChild(p);
-                }
                 return;
             }
-
             canvas.style.display = 'block';
-            const parent = canvas.closest('.chart-container');
-            const oldMsg = parent.querySelector('.no-chart-data-msg');
-            if (oldMsg) oldMsg.remove();
 
             const isDark = Array.from(document.body.classList).some(c => c.startsWith('theme-dark-'));
             const tickColor   = isDark ? '#ccc' : '#666';
@@ -426,9 +785,6 @@
             const gridColor   = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
             const borderColor = isDark ? 'rgba(75,192,192,1)' : 'rgba(0,123,255,1)';
             const bgColor     = isDark ? 'rgba(75,192,192,0.2)' : 'rgba(0,123,255,0.2)';
-
-            // For long periods, thin out x-axis labels to avoid crowding
-            const skipLabels = timeseries.length > 60 ? Math.ceil(timeseries.length / 30) : 0;
 
             new Chart(canvas.getContext('2d'), {
                 type: 'line',
@@ -448,7 +804,7 @@
                     scales: {
                         x: {
                             title: { display: true, text: period === '24h' || period === '7d' ? 'Time (UTC)' : 'Date (UTC)', color: legendColor },
-                            ticks: { color: tickColor, maxTicksLimit: 20, autoSkip: true },
+                            ticks: { color: tickColor, maxTicksLimit: 12, autoSkip: true },
                             grid: { color: gridColor },
                         },
                         y: {
@@ -482,7 +838,6 @@
             updatePageTitle(currentHost);
             updateChartTitle(currentPeriod);
 
-            // Build API URL
             let apiUrl = "{{ url_for('get_stats') }}";
             const params = new URLSearchParams();
             params.set('period', currentPeriod);
@@ -494,9 +849,8 @@
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const stats = await res.json();
 
-                // Show log config prompt if error
                 if (stats.log_read_error) {
-                    logMsg.innerHTML = `<strong>Warning:</strong> ${stats.log_read_error}<br>Please ensure Caddy is configured for JSON logging to stdout.`;
+                    logMsg.innerHTML = `<strong>Warning:</strong> ${stats.log_read_error}<br>Ensure Caddy is configured for JSON logging.`;
                     logArea.style.display = 'block';
                     loadingEl.style.display = 'none';
                 } else {
@@ -504,28 +858,36 @@
                     logArea.style.display = 'none';
                 }
 
-                contentEl.style.display = 'block';
+                contentEl.style.display = 'grid';
 
-                // Summary cards
+                // KPI cards
                 document.getElementById('total-requests').textContent = (stats.total_requests || 0).toLocaleString();
-                document.getElementById('error-rate').textContent = (stats.error_rate_percent || 0).toFixed(2) + ' %';
-                document.getElementById('avg-response-time').textContent = (stats.avg_response_time_ms || 0).toFixed(2) + ' ms';
-                document.getElementById('avg-response-size').textContent = (stats.avg_response_size_kb || 0).toFixed(2) + ' KB';
+                document.getElementById('error-rate').textContent = (stats.error_rate_percent || 0).toFixed(1) + '%';
+                document.getElementById('avg-response-time').textContent = (stats.avg_response_time_ms || 0).toFixed(0) + ' ms';
+                document.getElementById('avg-response-size').textContent = (stats.avg_response_size_kb || 0).toFixed(1) + ' KB';
 
                 // Data period
                 if (stats.data_from_utc && stats.data_from_utc !== 'N/A') {
-                    periodEl.textContent = `Data from: ${stats.data_from_utc} to ${stats.data_to_utc}`;
+                    periodEl.textContent = `${stats.data_from_utc} → ${stats.data_to_utc}`;
                 } else if (!stats.log_read_error) {
-                    periodEl.textContent = 'Data period: N/A';
+                    periodEl.textContent = '';
                 } else {
                     periodEl.textContent = '';
                 }
 
+                // Status bar
+                renderStatusBar(stats.status_codes_dist || {});
+
                 // Lists
-                populateList('requests-by-host', stats.requests_by_host);
-                populateList('status-codes-dist', stats.status_codes_dist, 'No status code data.');
-                populateList('top-paths', stats.top_paths);
-                populateList('top-user-agents', stats.top_user_agents);
+                populateList('requests-by-host', stats.requests_by_host, 'No host data.');
+                populateList('top-paths', stats.top_paths, 'No path data.');
+                populateList('top-user-agents', stats.top_user_agents, 'No UA data.');
+
+                // Countries
+                renderCountries(stats.top_countries || []);
+
+                // World map
+                renderWorldMap(stats.top_countries || []);
 
                 // Chart
                 const canvas = document.getElementById('requests-timeseries-chart');
@@ -533,7 +895,7 @@
 
             } catch (err) {
                 console.error('Error fetching stats:', err);
-                loadingEl.textContent = `Error loading statistics: ${err.message}`;
+                loadingEl.textContent = `Error: ${err.message}`;
                 loadingEl.style.color = 'red';
                 loadingEl.style.display = 'block';
                 contentEl.style.display = 'none';
@@ -566,7 +928,7 @@
             const cfgBtn = document.getElementById('configure-logging-btn');
             if (cfgBtn) {
                 cfgBtn.addEventListener('click', async () => {
-                    showToast('Attempting to configure Caddyfile for logging...', 'info', 10000);
+                    showToast('Configuring Caddyfile for logging...', 'info', 10000);
                     cfgBtn.disabled = true;
                     cfgBtn.textContent = 'Configuring...';
                     try {
@@ -584,7 +946,7 @@
                         showToast(`Error: ${err.message}`, 'danger', 10000);
                     } finally {
                         cfgBtn.disabled = false;
-                        cfgBtn.textContent = 'Attempt to Configure Caddy Logging';
+                        cfgBtn.textContent = 'Configure Caddy Logging';
                     }
                 });
             }
