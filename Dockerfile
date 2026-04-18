@@ -1,5 +1,5 @@
 # --- Stage 1: Caddy Builder ---
-FROM python:3.10-slim-bookworm AS caddy_builder
+FROM python:3.10-slim-bullseye AS caddy_builder
 
 ARG CADDY_VERSION=2.10.0
 # TARGETARCH is automatically provided by Docker Buildx (e.g., amd64, arm64)
@@ -30,9 +30,27 @@ RUN \
     rm /tmp/caddy.tar.gz && \
     chmod +x /usr/local/bin/caddy
 
+# --- Stage 2: GeoIP updater binary ---
+FROM python:3.10-slim-bullseye AS geoip_builder
 
-# --- Stage 2: Final Application ---
-FROM python:3.10-slim-bookworm
+ARG TARGETARCH
+# Download geoipupdate binary from MaxMind GitHub releases
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/* && \
+    GEOIP_VER="7.0.1" && \
+    case "${TARGETARCH:-amd64}" in \
+        amd64)  GEOIP_ARCH="amd64" ;; \
+        arm64)  GEOIP_ARCH="arm64" ;; \
+        armhf)  GEOIP_ARCH="armhf" ;; \
+        *)      GEOIP_ARCH="amd64" ;; \
+    esac && \
+    curl -fsSL "https://github.com/maxmind/geoipupdate/releases/download/v${GEOIP_VER}/geoipupdate_${GEOIP_VER}_linux_${GEOIP_ARCH}.tar.gz" -o /tmp/geoip.tar.gz && \
+    tar -C /tmp -xzf /tmp/geoip.tar.gz && \
+    cp /tmp/geoipupdate_${GEOIP_VER}_linux_${GEOIP_ARCH}/geoipupdate /usr/local/bin/geoipupdate && \
+    chmod +x /usr/local/bin/geoipupdate && \
+    rm -rf /tmp/geoip*
+
+# --- Stage 3: Final Application ---
+FROM python:3.10-slim-bullseye
 
 # Arguments for user and group creation
 ARG APP_USER_ID=1000
@@ -50,11 +68,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=off
 ENV PIP_DISABLE_PIP_VERSION_CHECK=on
 
-# Install system dependencies + geoipupdate + curl (for entrypoint)
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         supervisor \
-        geoipupdate \
         curl \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -66,22 +83,20 @@ RUN groupadd --gid ${APP_GROUP_ID} appgroup && \
 # Copy Caddy binary from the builder stage
 COPY --from=caddy_builder /usr/local/bin/caddy /usr/bin/caddy
 
+# Copy geoipupdate binary from the geoip builder stage
+COPY --from=geoip_builder /usr/local/bin/geoipupdate /usr/local/bin/geoipupdate
+
 # Set the working directory
 WORKDIR ${FLASK_APP_DIR}
 
 # Copy requirements.txt and install Python dependencies
-# These files are now at the root of the build context (which is C2RPM/)
 COPY requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 
-# Copy the rest of the application into ${FLASK_APP_DIR}
-# The '.' means the root of the build context (C2RPM/)
-# This will copy app.py, static/, templates/, docker/, caddyfile/, etc. into /app
-COPY . ./ 
+# Copy the rest of the application
+COPY . .
 
 # Copy Docker configurations to the correct locations
-# The source files are now relative to the build context (C2RPM/)
-# so docker/supervisord.conf refers to C2RPM/docker/supervisord.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
