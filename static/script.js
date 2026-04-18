@@ -66,6 +66,7 @@ const defaultAuthentikCopyHeadersInput = document.getElementById('default-authen
 const defaultAuthentikTrustedProxiesInput = document.getElementById('default-authentik-trusted-proxies');
 const maxmindAccountIdInput = document.getElementById('maxmind-account-id');
 const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
+const testGeoipBtn = document.getElementById('test-geoip-btn');
 const downloadGeoipBtn = document.getElementById('download-geoip-btn');
 const geoipStatusText = document.getElementById('geoip-status-text');
 
@@ -146,13 +147,41 @@ if (savePrefsBtn) {
             }
         });
     }
-    // Enable download button when both credentials are entered
+    // Enable download/test buttons when both credentials are entered
     const checkGeoipCreds = () => {
         const hasBoth = maxmindAccountIdInput?.value.trim() && maxmindLicenseKeyInput?.value.trim();
+        if (testGeoipBtn) testGeoipBtn.disabled = !hasBoth;
         if (downloadGeoipBtn) downloadGeoipBtn.disabled = !hasBoth;
     };
     if (maxmindAccountIdInput) maxmindAccountIdInput.addEventListener('input', checkGeoipCreds);
     if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.addEventListener('input', checkGeoipCreds);
+
+    // Test connection button
+    if (testGeoipBtn) {
+        testGeoipBtn.addEventListener('click', async () => {
+            if (!maxmindAccountIdInput?.value.trim() || !maxmindLicenseKeyInput?.value.trim()) {
+                showToast('Enter both Account ID and License Key first.', 'warning'); return;
+            }
+            testGeoipBtn.disabled = true; testGeoipBtn.textContent = 'Testing...';
+            if (geoipStatusText) geoipStatusText.textContent = 'Testing credentials...';
+            try {
+                const res = await fetch('/api/geoip/test', { method: 'POST' });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    showToast(result.message, 'success');
+                    if (geoipStatusText) geoipStatusText.textContent = '✓ Credentials valid';
+                } else {
+                    showToast(result.message, 'error', 12000);
+                    if (geoipStatusText) geoipStatusText.textContent = '✗ Invalid credentials';
+                }
+            } catch (err) {
+                showToast('Test failed: ' + err.message, 'error');
+                if (geoipStatusText) geoipStatusText.textContent = '✗ Connection failed';
+            } finally {
+                testGeoipBtn.disabled = false; testGeoipBtn.textContent = 'Test Connection';
+            }
+        });
+    }
 }
 if (addHostBtn) {
     addHostBtn.addEventListener('click', () => openSiteModal());

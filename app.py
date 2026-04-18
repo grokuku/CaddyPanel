@@ -298,7 +298,7 @@ def _try_geoip_download_and_configure(account_id, license_key):
         print(f"GeoIP: downloading from MaxMind (AccountID {account_id})...")
 
         tmp_tar = Path(tempfile.mktemp(suffix='.tar.gz'))
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             with open(str(tmp_tar), 'wb') as f:
                 shutil.copyfileobj(resp, f)
 
@@ -315,9 +315,20 @@ def _try_geoip_download_and_configure(account_id, license_key):
             stats_aggregator.configure_geoip(str(geoip_path))
             return True, f"GeoIP database downloaded successfully ({geoip_path.stat().st_size / 1024 / 1024:.1f} MB)"
         else:
-            return False, "Download succeeded but mmdb file not found in archive. Check your credentials."
+            return False, "Download succeeded but mmdb file not found in archive."
     except urllib.error.HTTPError as e:
-        return False, f"MaxMind API returned HTTP {e.code}. Check Account ID and License Key."
+        body = ''
+        try:
+            body = e.read(200).decode('utf-8', errors='replace')
+        except Exception:
+            pass
+        detail = body or 'Check your credentials.'
+        if e.code == 401:
+            return False, (f"Authentication failed (HTTP 401: {detail}). "
+                           f"Make sure you generated a License Key at "
+                           f"https://www.maxmind.com/en/accounts/{account_id}/license-key "
+                           f"and accepted the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula")
+        return False, f"MaxMind API returned HTTP {e.code}: {detail}"
     except Exception as e:
         try:
             tmp_tar.unlink(missing_ok=True)
@@ -341,6 +352,43 @@ def api_geoip_download():
         return jsonify({"status": "success", "message": message, "geoip_available": stats_aggregator.is_geoip_available()})
     else:
         return jsonify({"status": "error", "message": message, "geoip_available": False}), 500
+
+
+@app.route('/api/geoip/test', methods=['POST'])
+@login_required
+def api_geoip_test():
+    """Test MaxMind credentials without downloading the full database."""
+    prefs = load_preferences()
+    account_id = prefs.get('maxmindAccountId', '')
+    license_key = prefs.get('maxmindLicenseKey', '')
+    if not account_id or not license_key:
+        return jsonify({"status": "error", "message": "Enter both Account ID and License Key first."}), 400
+
+    try:
+        import urllib.request, base64
+        # Use GET (not HEAD) so we get the error body from MaxMind
+        url = "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz"
+        credentials = base64.b64encode(f"{account_id}:{license_key}".encode()).decode()
+        req = urllib.request.Request(url, headers={"Authorization": f"Basic {credentials}"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=10)
+            size_mb = int(resp.headers.get('Content-Length', 0)) / 1024 / 1024
+            # Read and discard - we just want to verify auth works
+            resp.read(1)
+            return jsonify({"status": "success", "message": f"Credentials valid! Database available ({size_mb:.1f} MB). Click Download to proceed."})
+        except urllib.error.HTTPError as e:
+            body = ''
+            try: body = e.read(200).decode('utf-8', errors='replace')
+            except: pass
+            if e.code == 401:
+                hint = ("You may need to: 1) Generate a NEW License Key for API access at "
+                        f"https://www.maxmind.com/en/accounts/{account_id}/license-key "
+                        "2) Accept the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula"
+                        " (Keys from 'geoipupdate' config don't always work for direct downloads.)")
+                return jsonify({"status": "error", "message": f"Authentication failed: {body or 'Invalid credentials'}. {hint}"}), 401
+            return jsonify({"status": "error", "message": f"HTTP {e.code}: {body or 'Unknown error'}"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Connection test failed: {e}"}), 500
 
 
 @app.route('/api/geoip/status', methods=['GET'])
