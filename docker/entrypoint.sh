@@ -23,28 +23,54 @@ mkdir -p "${CADDY_CONFIG_DIR}" # e.g., /etc/caddy
 mkdir -p "${CADDY_DATA_DIR}"   # e.g., /data/caddy
 mkdir -p /var/log/caddy_panel   # for JSON access logs (persisted via volume)
 
-# --- Download GeoLite2-Country database if MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY are set ---
+# --- Download GeoLite2-Country database if credentials are set ---
 GEOIP_DB_PATH="${APP_DATA_DIR}/GeoLite2-Country.mmdb"
 if [ -f "$GEOIP_DB_PATH" ]; then
     echo "GeoIP: database already exists at $GEOIP_DB_PATH"
 elif [ -n "$MAXMIND_ACCOUNT_ID" ] && [ -n "$MAXMIND_LICENSE_KEY" ]; then
-    echo "Downloading GeoLite2-Country database (AccountID: $MAXMIND_ACCOUNT_ID)..."
-    GEOIP_URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz"
-    if curl -fsSL -u "${MAXMIND_ACCOUNT_ID}:${MAXMIND_LICENSE_KEY}" "$GEOIP_URL" -o /tmp/GeoLite2-Country.tar.gz 2>/dev/null; then
-        cd /tmp && tar xzf GeoLite2-Country.tar.gz && mv GeoLite2-Country_*/GeoLite2-Country.mmdb "$GEOIP_DB_PATH" 2>/dev/null
-        rm -f /tmp/GeoLite2-Country.tar.gz /tmp/GeoLite2-Country_* 2>/dev/null
-        cd "${FLASK_APP_DIR}"
-        if [ -f "$GEOIP_DB_PATH" ]; then
-            echo "GeoIP: database downloaded successfully to $GEOIP_DB_PATH"
+    # Strategy 1: use geoipupdate if available (most reliable)
+    if command -v geoipupdate >/dev/null 2>&1; then
+        echo "GeoIP: downloading via geoipupdate..."
+        cat >"${APP_DATA_DIR}/GeoIP.conf" <<GEOIPCONF
+AccountID ${MAXMIND_ACCOUNT_ID}
+LicenseKey ${MAXMIND_LICENSE_KEY}
+EditionIDs GeoLite2-Country
+DatabaseDirectory ${APP_DATA_DIR}
+GEOIPCONF
+        if geoipupdate -f "${APP_DATA_DIR}/GeoIP.conf" -d "${APP_DATA_DIR}"; then
+            if [ -f "$GEOIP_DB_PATH" ]; then
+                echo "GeoIP: database downloaded via geoipupdate to $GEOIP_DB_PATH"
+            else
+                echo "WARNING: geoipupdate ran but $GEOIP_DB_PATH not found. Falling back to HTTP download."
+            fi
         else
-            echo "WARNING: GeoIP database download failed. Country stats will be unavailable."
+            echo "WARNING: geoipupdate failed. Falling back to HTTP download."
         fi
-    else
-        echo "WARNING: Could not download GeoLite2-Country database. Check credentials."
+    fi
+    # Strategy 2: if geoipupdate didn't work or isn't available, try HTTP
+    if [ ! -f "$GEOIP_DB_PATH" ]; then
+        echo "GeoIP: trying HTTP download from MaxMind API..."
+        if curl -fsSL -u "${MAXMIND_ACCOUNT_ID}:${MAXMIND_LICENSE_KEY}" \
+            "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz" \
+            -o /tmp/GeoLite2-Country.tar.gz 2>/dev/null; then
+            cd /tmp && tar xzf GeoLite2-Country.tar.gz && mv GeoLite2-Country_*/GeoLite2-Country.mmdb "$GEOIP_DB_PATH" 2>/dev/null
+            rm -f /tmp/GeoLite2-Country.tar.gz /tmp/GeoLite2-Country_* 2>/dev/null
+            cd "${FLASK_APP_DIR}"
+            if [ -f "$GEOIP_DB_PATH" ]; then
+                echo "GeoIP: database downloaded via HTTP to $GEOIP_DB_PATH"
+            else
+                echo "WARNING: GeoIP HTTP download failed. Country stats will be unavailable."
+                echo "       Try downloading manually or check https://www.maxmind.com/en/geolite2/eula"
+            fi
+        else
+            echo "WARNING: Could not download GeoLite2-Country database. Check credentials."
+            echo "       You can also download it manually from https://www.maxmind.com and place it at $GEOIP_DB_PATH"
+        fi
     fi
 else
     echo "GeoIP: MAXMIND_ACCOUNT_ID and/or MAXMIND_LICENSE_KEY not set. Country statistics will be unavailable."
     echo "       Get a free account at https://www.maxmind.com/en/geolite2/signup"
+    echo "       Then enter the credentials in the Preferences page (GeoIP section)."
 fi
 export GEOIP_DB_PATH
 

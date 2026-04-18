@@ -50,10 +50,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=off
 ENV PIP_DISABLE_PIP_VERSION_CHECK=on
 
-# Install system dependencies
+# Install system dependencies + geoipupdate
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         supervisor \
+        geoipupdate \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

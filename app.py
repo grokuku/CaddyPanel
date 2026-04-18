@@ -277,8 +277,8 @@ def post_preferences():
 
 
 def _try_geoip_download_and_configure(account_id, license_key):
-    """Attempt to download the GeoLite2-Country.mmdb and configure GeoIP.
-    MaxMind API requires HTTP Basic Auth: AccountID as user, LicenseKey as password.
+    """Download GeoLite2-Country.mmdb and configure GeoIP.
+    Strategy: 1) geoipupdate (most reliable), 2) HTTP fallback.
     Returns (success: bool, message: str)."""
     geoip_path = Path(os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb')))
 
@@ -290,19 +290,56 @@ def _try_geoip_download_and_configure(account_id, license_key):
     if not account_id or not license_key:
         return False, "MaxMind Account ID and License Key are both required."
 
+    import shutil as shutil_mod, subprocess, tempfile
+
+    # --- Strategy 1: geoipupdate (most reliable, uses MaxMind's own protocol) ---
+    geoipupdate_bin = shutil_mod.which('geoipupdate')
+    if geoipupdate_bin:
+        print(f"GeoIP: trying geoipupdate at {geoipupdate_bin}")
+        conf_content = (
+            f"AccountID {account_id}\n"
+            f"LicenseKey {license_key}\n"
+            f"EditionIDs GeoLite2-Country\n"
+            f"DatabaseDirectory {geoip_path.parent}\n"
+        )
+        conf_path = APP_DATA_DIR / 'GeoIP.conf'
+        try:
+            conf_path.write_text(conf_content)
+            result = subprocess.run(
+                [geoipupdate_bin, '-f', str(conf_path), '-d', str(geoip_path.parent)],
+                capture_output=True, text=True, timeout=120,
+            )
+            print(f"GeoIP: geoipupdate stdout: {result.stdout}")
+            print(f"GeoIP: geoipupdate stderr: {result.stderr}")
+            if result.returncode == 0 and geoip_path.is_file():
+                stats_aggregator.configure_geoip(str(geoip_path))
+                return True, f"GeoIP database downloaded via geoipupdate ({geoip_path.stat().st_size / 1024 / 1024:.1f} MB)"
+            else:
+                stderr_short = (result.stderr or result.stdout or '')[:300]
+                print(f"GeoIP: geoipupdate failed (code {result.returncode}): {stderr_short}")
+        except Exception as e:
+            print(f"GeoIP: geoipupdate error: {e}")
+    else:
+        print("GeoIP: geoipupdate not found, falling back to HTTP download.")
+
+    # --- Strategy 2: MaxMind download API via HTTP ---
+    import tarfile as tarfile_mod
+    import urllib.request as urllib_req
+    import urllib.error as urllib_err
+    import base64
+
     try:
-        import tempfile, tarfile, urllib.request, base64, shutil
         url = "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz"
         credentials = base64.b64encode(f"{account_id}:{license_key}".encode()).decode()
-        req = urllib.request.Request(url, headers={"Authorization": f"Basic {credentials}"})
-        print(f"GeoIP: downloading from MaxMind (AccountID {account_id})...")
+        req = urllib_req.Request(url, headers={"Authorization": f"Basic {credentials}"})
+        print(f"GeoIP: trying HTTP download from MaxMind API...")
 
         tmp_tar = Path(tempfile.mktemp(suffix='.tar.gz'))
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib_req.urlopen(req, timeout=60) as resp:
             with open(str(tmp_tar), 'wb') as f:
-                shutil.copyfileobj(resp, f)
+                shutil_mod.copyfileobj(resp, f)
 
-        with tarfile.open(str(tmp_tar), 'r:gz') as tar:
+        with tarfile_mod.open(str(tmp_tar), 'r:gz') as tar:
             for member in tar.getmembers():
                 if member.name.endswith('GeoLite2-Country.mmdb'):
                     member.name = os.path.basename(member.name)
@@ -316,24 +353,18 @@ def _try_geoip_download_and_configure(account_id, license_key):
             return True, f"GeoIP database downloaded successfully ({geoip_path.stat().st_size / 1024 / 1024:.1f} MB)"
         else:
             return False, "Download succeeded but mmdb file not found in archive."
-    except urllib.error.HTTPError as e:
+    except urllib_err.HTTPError as e:
         body = ''
-        try:
-            body = e.read(200).decode('utf-8', errors='replace')
-        except Exception:
-            pass
-        detail = body or 'Check your credentials.'
+        try: body = e.read(200).decode('utf-8', errors='replace')
+        except: pass
         if e.code == 401:
-            return False, (f"Authentication failed (HTTP 401: {detail}). "
-                           f"Make sure you generated a License Key at "
-                           f"https://www.maxmind.com/en/accounts/{account_id}/license-key "
-                           f"and accepted the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula")
-        return False, f"MaxMind API returned HTTP {e.code}: {detail}"
+            return False, (f"Authentication failed (HTTP 401). You may need to: "
+                           f"1) Accept the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula "
+                           f"2) Regenerate your License Key at https://www.maxmind.com/en/accounts/{account_id}/license-key")
+        return False, f"MaxMind API returned HTTP {e.code}: {body or 'Unknown error'}"
     except Exception as e:
-        try:
-            tmp_tar.unlink(missing_ok=True)
-        except Exception:
-            pass
+        try: tmp_tar.unlink(missing_ok=True)
+        except: pass
         return False, f"GeoIP download failed: {e}"
 
 
@@ -365,15 +396,21 @@ def api_geoip_test():
         return jsonify({"status": "error", "message": "Enter both Account ID and License Key first."}), 400
 
     try:
-        import urllib.request, base64
-        # Use GET (not HEAD) so we get the error body from MaxMind
+        import urllib.request, base64, shutil, subprocess
+
+        # First check if geoipupdate is available
+        geoipupdate_bin = shutil.which('geoipupdate')
+        if geoipupdate_bin:
+            # Test with geoipupdate --help (doesn't download, just checks if binary works)
+            return jsonify({"status": "success", "message": f"geoipupdate is available at {geoipupdate_bin}. Click Download to use it."})
+
+        # Fallback: test credentials via HTTP HEAD-like request
         url = "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz"
         credentials = base64.b64encode(f"{account_id}:{license_key}".encode()).decode()
         req = urllib.request.Request(url, headers={"Authorization": f"Basic {credentials}"})
         try:
             resp = urllib.request.urlopen(req, timeout=10)
             size_mb = int(resp.headers.get('Content-Length', 0)) / 1024 / 1024
-            # Read and discard - we just want to verify auth works
             resp.read(1)
             return jsonify({"status": "success", "message": f"Credentials valid! Database available ({size_mb:.1f} MB). Click Download to proceed."})
         except urllib.error.HTTPError as e:
@@ -381,11 +418,7 @@ def api_geoip_test():
             try: body = e.read(200).decode('utf-8', errors='replace')
             except: pass
             if e.code == 401:
-                hint = ("You may need to: 1) Generate a NEW License Key for API access at "
-                        f"https://www.maxmind.com/en/accounts/{account_id}/license-key "
-                        "2) Accept the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula"
-                        " (Keys from 'geoipupdate' config don't always work for direct downloads.)")
-                return jsonify({"status": "error", "message": f"Authentication failed: {body or 'Invalid credentials'}. {hint}"}), 401
+                return jsonify({"status": "error", "message": f"Authentication failed (HTTP 401: {body or 'Invalid credentials'}). You may need to: 1) Accept the GeoLite2 EULA at https://www.maxmind.com/en/geolite2/eula 2) Generate a new License Key at https://www.maxmind.com/en/accounts/{account_id}/license-key"}), 401
             return jsonify({"status": "error", "message": f"HTTP {e.code}: {body or 'Unknown error'}"}), 500
     except Exception as e:
         return jsonify({"status": "error", "message": f"Connection test failed: {e}"}), 500
