@@ -39,61 +39,65 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 ======================================================================
 
 - app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
-  - Preferences include: theme, caddyfilePath, globalAdminEmail, maxmindAccountId, maxmindLicenseKey, defaultAuthentikEnabled, defaultAuthentikOutpostUrl, defaultAuthentikUri, defaultAuthentikCopyHeaders, defaultAuthentikTrustedProxies, defaultSkipTlsVerify.
+  - Preferences include: theme, caddyfilePath, globalAdminEmail, maxmindAccountId, maxmindLicenseKey, geoBlockMode, geoBlockCountries, defaultAuthentikEnabled, defaultAuthentikOutpostUrl, defaultAuthentikUri, defaultAuthentikCopyHeaders, defaultAuthentikTrustedProxies, defaultSkipTlsVerify.
   - Credentials masking: GET /api/preferences masks maxmindAccountId (****XXX) and maxmindLicenseKey (********XXXX). POST detects masked values and keeps existing ones.
   - `_try_geoip_download_and_configure(account_id, license_key)`: Strategy 1: runs `geoipupdate` binary (most reliable). Strategy 2: HTTP download from MaxMind API with Basic Auth. Returns (success, message).
   - `POST /api/geoip/download`: triggers download using stored credentials.
   - `POST /api/geoip/upload`: accepts .mmdb file upload, saves to GEOIP_DB_PATH, configures stats_aggregator.
   - `GET /api/geoip/status`: returns {geoip_available: bool}.
   - `GET /api/geoip/test`: tests credentials without downloading full DB.
+  - `GET /api/geoip/countries`: returns countries seen in stats (for geo-blocking UI).
+  - `GET/POST/PUT/DELETE/PATCH/OPTIONS /api/geoip/check`: **forward-auth endpoint for Caddy geo-blocking**. No @login_required. Checks client IP country against geoBlockMode + geoBlockCountries. Returns 200 (allow) or 403 (block). Uses LRU+TTL cache (10K entries, 5min TTL) for IP→country lookups. If GeoIP unavailable or mode=off, always returns 200.
   - On preference save: if maxmindAccountId + maxmindLicenseKey provided and GeoIP DB not present, auto-downloads.
+  - On preference save: if geoBlockMode or geoBlockCountries changed, calls `_apply_geoblocking_to_caddyfile()`.
+  - `_apply_geoblocking_to_caddyfile(enabled)`: reads Caddyfile, calls `_configure_caddyfile_geoblocking()`, writes back, reloads Caddy.
+  - `_configure_caddyfile_geoblocking(content, enabled, flask_port)`: injects/removes `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` in each site block (marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments). Skips the global block.
   - `_find_matching_brace()`, `_remove_directive_block()`, `_add_log_to_site_blocks()`, `_configure_caddyfile_logging_internal()`: Caddyfile parsing helpers.
 
 - stats_aggregator.py: Incremental log processor + stats query engine.
   - SQLite DB with `PRAGMA journal_mode=WAL`. Two tables: hourly_stats (7d retention) and daily_stats (365d retention).
   - Schema columns: bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON, top_countries JSON.
-  - `process_new_logs()`: extracts `request.remote_ip` (fallback: X-Forwarded-For, X-Real-Ip). Resolves to ISO country code via `geoip2` if available, else 'Unknown'.
+  - `process_new_logs()`: extracts `request.remote_ip` (fallback: X-Forwarded-For, X-Real-Ip). Resolves to ISO country code via `geoip2` if available, else 'Unknown'. Stores in `top_countries`.
   - `configure_geoip(db_path)`: loads MaxMind GeoLite2-Country.mmdb. Graceful if unavailable.
-  - `_resolve_country(ip_str)`: returns ISO 3166-1 alpha-2 code or 'Unknown'.
+  - `_resolve_country(ip_str)`: returns ISO 3166-1 alpha-2 code or 'Unknown'. Also used by forward-auth endpoint via app.py cache.
   - `is_geoip_available()`: checks if GeoIP reader is loaded.
   - `get_stats()`: returns `top_countries` (top 10) + `geoip_available` (bool).
   - DB migration: on init, `ALTER TABLE ADD COLUMN top_countries` if missing.
 
 - Dockerfile: Multi-stage build.
-  - Stage 1 (caddy_builder): downloads Caddy binary.
-  - Stage 2 (geoip_builder): downloads `geoipupdate` binary from MaxMind GitHub releases (v7.0.1). Supports amd64 + arm64.
+  - Stage 1 (caddy_builder): downloads Caddy binary from GitHub releases (supports amd64 + arm64).
+  - Stage 2 (geoip_builder): downloads `geoipupdate` binary from MaxMind GitHub releases (v7.0.1, amd64 + arm64).
   - Stage 3 (final): python:3.10-slim-bullseye. Installs supervisor + curl. Copies Caddy + geoipupdate binaries from builder stages.
-  - Installs `geoip2` via pip (from requirements.txt).
+  - Installs `geoip2` via pip.
   - `GEOIP_DB_PATH` env var defaults to `/app_data/GeoLite2-Country.mmdb`.
+  - `FLASK_PORT` env var defaults to 5000.
 
 - docker/entrypoint.sh:
   - Auto-configures Caddyfile logging via Python heredoc.
-  - GeoIP download: tries `geoipupdate` first (if available + credentials set), then falls back to `curl` with Basic Auth. Uses `MAXMIND_ACCOUNT_ID` + `MAXMIND_LICENSE_KEY` env vars.
+  - GeoIP download: tries `geoipupdate` first, then falls back to `curl` with Basic Auth.
   - Generates `/app_data/GeoIP.conf` for `geoipupdate` on the fly.
 
 - docker-compose.yml: Documents `MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` env vars (commented out).
 
-- templates/index.html: Preferences page has a "GeoIP / Statistics" section with:
-  - MaxMind Account ID input
-  - MaxMind License Key input (password type, masked in API)
-  - "Test" button (tests credentials via `/api/geoip/test`)
-  - "Download" button (downloads via `/api/geoip/download` using geoipupdate then HTTP fallback)
-  - "Upload manually" file input (uploads .mmdb via `/api/geoip/upload`)
-  - Link to MaxMind signup page
+- templates/index.html: Preferences page sections:
+  - **GeoIP / Statistics**: Account ID input, License Key input, Test/Download buttons, manual .mmdb upload, status indicator.
+  - **Geo-Blocking**: Mode select (Off / Block / Allow), searchable country list with flag emojis, selected countries as removable tags (chips). When enabled, injects `forward_auth` into Caddyfile site blocks.
 
-- templates/stats.html: Full-viewport CSS Grid dashboard (no scroll). Uses CSS custom properties (--accent, --bg-card, etc.) for theming.
+- templates/stats.html: Full-viewport CSS Grid dashboard (no scroll). Uses CSS custom properties.
   - D3 + TopoJSON world map heatmap from CDN (world-atlas@2).
   - Top 5 countries with flag emojis.
+  - **Host names are clickable**: clicking a host in the "Requests by Host" list sets the host filter and refreshes stats.
   - KPI cards, status bar, list cards with overflow-y auto.
   - Chart.js timeseries.
   - Stats API: `/api/stats?period=7d&host=` returns `top_countries` + `geoip_available`.
 
-- static/style.css: Redesigned theme system using CSS custom properties.
-  - 10 themes (5 light + 5 dark): only accent color changes per theme. Base is neutral gray for all.
-  - Variables: --accent, --accent-hover, --accent-contrast, --bg-page, --bg-card, --bg-elevated, --bg-input, --text-primary, --text-secondary, --text-heading, --border, --border-strong, --shadow.
-  - Light themes: white/gray base. Dark themes: dark gray base.
+- static/script.js: Caddyfile parsing uses `findMatchingBrace()`. Stats button opens `/stats?host=X`.
+  - Geo-blocking UI: COUNTRY_DATA object (ISO 3166-1 alpha-2 → name), `countryFlag()` for emoji flags, `renderGeoBlockUI()` for show/hide and list rendering, `renderGeoSelectedTags()` for chip display.
+  - `geoSelectedCountries` array: maintained in JS, saved/loaded as `geoBlockCountries` preference.
 
-- templates/login.html & setup.html: Use CSS variables from style.css. Clean centered auth forms.
+- static/style.css: 10 themes (5 light + 5 dark). Neutral gray base, only accent color varies. CSS custom properties.
+
+- templates/login.html & setup.html: Use CSS variables from style.css.
 
 - requirements.txt: Flask, Werkzeug, gunicorn, geoip2>=4.0.0.
 
@@ -111,25 +115,34 @@ GEOIP:
   1. UI Preferences → enter Account ID + License Key → "Download" (uses `geoipupdate` then HTTP fallback)
   2. UI Preferences → "Upload manually" .mmdb file
   3. Docker env vars `MAXMIND_ACCOUNT_ID` + `MAXMIND_LICENSE_KEY` → auto-download at startup
-- `geoipupdate` is the primary download method (uses MaxMind's own protocol). HTTP Basic Auth is fallback.
+- `geoipupdate` is the primary download method. HTTP Basic Auth is fallback.
 - If no GeoIP DB is available, country stats show "Unknown" and the map shows "No geographic data".
-- Credentials are masked in the GET /api/preferences response. Masked values (****XXX / ********XXXX) are preserved on POST.
+- Credentials are masked in the GET /api/preferences response.
+
+GEO-BLOCKING (forward_auth approach):
+- Uses Caddy's built-in `forward_auth` directive (no Caddy plugin needed, no xcaddy rebuild).
+- When enabled, injects `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` into every site block in the Caddyfile.
+- Marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments for clean removal.
+- Flask endpoint `/api/geoip/check` resolves client IP → country via geoip2 (with LRU+TTL cache of 10K entries, 5min TTL).
+- Mode "off": no blocking, `forward_auth` directives removed from Caddyfile.
+- Mode "block": blocks traffic from selected countries.
+- Mode "allow": allows only traffic from selected countries (blocks all others except "Unknown").
+- IP extraction: X-Real-Ip → X-Forwarded-For first entry → request.remote_addr.
+- `forward_auth` is NOT applied to CaddyPanel's own management port (not in Caddyfile site blocks).
 
 THEME SYSTEM:
-- All themes use the same neutral gray base. Only accent colors differ (buttons, active tabs, links, KPI values).
-- CSS custom properties (--accent, --bg-card, etc.) defined per theme class on body.
-- Light themes: white cards, dark text. Dark themes: dark cards, light text.
+- All themes use the same neutral gray base. Only accent colors differ.
+- CSS custom properties defined per theme class on body.
 
 STATS LAYOUT:
 - Full viewport (100vh, overflow hidden) CSS Grid: 3 columns × 3 rows.
-- KPI cards (4) in row 1 left, Countries + world map in row 1-2 right.
-- Status, Hosts, Paths, UAs in scrollable list cards.
-- Chart in bottom-right cell.
+- KPI cards in row 1 left, Countries + world map in row 1-2 right.
+- Host names clickable → filters stats to that host.
 
 DOCKER BUILD:
 - Multi-stage: caddy_builder → geoip_builder → final.
-- geoipupdate binary downloaded from GitHub releases (supports amd64 + arm64).
-- `python:3.10-slim-bullseye` base image (Debian 11, proven).
+- geoipupdate binary from GitHub releases (supports amd64 + arm64).
+- python:3.10-slim-bullseye base image.
 
 ======================================================================
 4. PROJECT STATUS
@@ -140,7 +153,9 @@ ACTIVE_BUGS / KNOWN_LIMITATIONS:
 - No login rate-limiting.
 - No password change feature.
 - Single-user system.
-- MaxMind HTTP API download may return 401 even with valid credentials (geoipupdate protocol is more reliable).
+- MaxMind HTTP API download may return 401 even with valid credentials (geoipupdate more reliable).
+- forward_auth adds ~5-10ms latency per request (Flask subrequest for IP→country lookup). Acceptable for self-hosted services but not suited for very high-traffic sites.
+- forward_auth depends on Flask being up; if Flask crashes, geo-blocked sites return 502 (no fail-open).
 - BASE_DIR for file browsing is CWD (includes app source code).
 
 ROADMAP:
@@ -148,6 +163,8 @@ ROADMAP:
 - Add login rate-limiting.
 - Add password change feature.
 - Restrict `/api/browse` and `/api/readfile` to specific directories.
+- Per-site geo-blocking (currently applies to all site blocks globally).
+- Consider xcaddy build with caddy-geoip plugin for zero-latency in-process geo-blocking.
 
 COMPLETED_FEATURES:
 - Containerized architecture (Docker/Compose).
@@ -157,19 +174,20 @@ COMPLETED_FEATURES:
 - User authentication.
 - Caddyfile management UI (Configurator + Raw Editor).
 - Automatic saving and reloading of Caddy.
-- Preferences management UI (including GeoIP section).
+- Preferences management UI (including GeoIP + Geo-blocking sections).
 - Statistics page with SQLite-backed aggregation (v1.3).
-- Statistics dashboard: full-viewport CSS Grid layout, no-scroll. CSS variable theming.
+- Statistics dashboard: full-viewport CSS Grid layout, no-scroll. CSS variable theming. Clickable host names.
 - GeoIP country tracking: top 5 countries + world heatmap (D3+TopoJSON). Upload or download GeoLite2-Country.mmdb.
+- **Geo-blocking**: forward_auth-based IP country blocking/allowing. UI with mode select, country search, flag emoji tags. Automatic Caddyfile injection/removal of directives on preference save. LRU+TTL cache for forward-auth performance.
 - Caddy log configuration wizard.
 - Multi-architecture Docker build (amd64 + arm64).
 - Automatic JSON logging configuration for all sites.
 
 COMPLETED_BUGFIXES (v1.5):
-- MODERATE: Stats cards growing infinitely vertically. Fix: CSS Grid with min-height:0, overflow:hidden/auto on grid children.
-- MODERATE: Themes were overly colorful (every element colored per theme). Fix: complete redesign using CSS custom properties. Neutral gray base, only accent colors vary.
-- IMPORTANT: GeoIP download via MaxMind API returned 401 with valid credentials. Fix: added `geoipupdate` as primary download method (installed from GitHub releases in Docker). Added manual .mmdb upload fallback. Added Test Connection button.
-- IMPORTANT: `maxmindLicenseKey` alone insufficient — MaxMind requires Account ID + License Key for API access. Fix: added `maxmindAccountId` preference field. Both fields required for download.
+- MODERATE: Stats cards growing infinitely vertically. Fix: CSS Grid with min-height:0, overflow:hidden/auto.
+- MODERATE: Themes overly colorful. Fix: complete redesign with CSS custom properties. Neutral gray base, only accent colors vary.
+- IMPORTANT: GeoIP download via MaxMind API returned 401. Fix: geoipupdate as primary method (GitHub releases binary). Added manual .mmdb upload. Added Test Connection button.
+- IMPORTANT: maxmindLicenseKey alone insufficient. Fix: added maxmindAccountId preference field.
 
 Earlier bugfixes (v1.4-, v1.3-, v1.2): see git history.
 
