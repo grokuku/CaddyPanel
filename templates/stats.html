@@ -9,12 +9,13 @@
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
     <style>
-        /* === Full-viewport layout === */
-        html, body {
-            margin: 0; padding: 0;
-            height: 100vh;
-            overflow: hidden;
+        /* Stats page inherits CSS variables from style.css */
+        html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            margin: 0 !important;
         }
 
         .stats-root {
@@ -23,22 +24,24 @@
             height: 100vh;
             padding: 8px 14px;
             box-sizing: border-box;
-            gap: 8px;
+            gap: 6px;
         }
 
-        /* --- Row 1: Header + Controls --- */
+        /* --- Header --- */
         .stats-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-shrink: 0;
             padding-bottom: 4px;
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: 1px solid var(--border);
         }
-        .stats-header h1 { margin: 0; font-size: 1.15em; }
-        .stats-header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85em; }
-        .stats-header-right a { text-decoration: underline; cursor: pointer; }
+        .stats-header h1 { margin: 0; font-size: 1.1em; color: var(--accent); }
+        .stats-header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85em; color: var(--text-secondary); }
+        .stats-header-right a { color: var(--accent); text-decoration: none; cursor: pointer; }
+        .stats-header-right a:hover { text-decoration: underline; }
 
+        /* --- Controls --- */
         .stats-controls {
             display: flex;
             flex-wrap: wrap;
@@ -49,298 +52,157 @@
         .period-selector { display: flex; gap: 3px; }
         .period-btn {
             padding: 4px 10px;
-            border: 1px solid #ccc;
+            border: 1px solid var(--border-strong);
             border-radius: 4px;
-            background: #fff;
+            background: var(--bg-card);
+            color: var(--text-secondary);
             cursor: pointer;
             font-size: 0.82em;
-            transition: background 0.2s, color 0.2s;
+            transition: all 0.2s;
         }
-        .period-btn:hover { background: #e9ecef; }
-        .period-btn.active { background: #007bff; color: #fff; border-color: #007bff; }
-
+        .period-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .period-btn.active {
+            background: var(--accent);
+            color: var(--accent-contrast);
+            border-color: var(--accent);
+        }
         .host-filter { display: flex; align-items: center; gap: 5px; }
-        .host-filter label { font-size: 0.82em; font-weight: bold; }
+        .host-filter label { font-size: 0.82em; font-weight: bold; color: var(--text-secondary); }
         .host-filter select {
-            padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;
+            padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 4px;
             font-size: 0.82em; min-width: 140px;
+            background: var(--bg-input); color: var(--text-primary);
         }
-        .data-period { font-size: 0.78em; color: #777; flex-shrink: 0; }
+        .data-period { font-size: 0.78em; color: var(--text-secondary); flex-shrink: 0; }
 
         /* --- Content grid --- */
         .stats-body {
             flex: 1;
-            min-height: 0;
+            min-height: 0;               /* Critical: prevents grid from overflowing viewport */
             display: grid;
             grid-template-columns: 1fr 1fr 1.8fr;
             grid-template-rows: auto 1fr 1fr;
-            gap: 8px;
+            gap: 6px;
         }
 
-        /* --- Stat cards --- */
-        .stat-card {
-            background: #fff;
+        /* --- Card base --- */
+        .card {
+            background: var(--bg-card);
             border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow);
             padding: 10px 14px;
+            overflow: hidden;              /* Prevent content from expanding card */
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            min-height: 0;                 /* Allow grid to shrink this */
         }
-        .stat-card h3 {
+        .card h3 {
             margin: 0 0 4px 0;
-            font-size: 0.82em;
-            color: #777;
+            font-size: 0.78em;
+            color: var(--text-secondary);
             text-transform: uppercase;
-            letter-spacing: 0.03em;
+            letter-spacing: 0.04em;
+            flex-shrink: 0;
         }
-        .stat-card .big-value {
-            font-size: 1.5em;
-            font-weight: 700;
-            color: #0056b3;
-            line-height: 1.1;
-        }
-        .stat-card .sub-detail { font-size: 0.72em; color: #999; margin-top: 2px; }
 
-        /* KPI row — 4 small cards */
+        /* --- KPI row --- */
         .kpi-row {
             grid-column: 1 / 3;
             grid-row: 1;
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
+            gap: 6px;
         }
         .kpi-card {
-            background: #fff;
+            background: var(--bg-card);
             border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow);
             padding: 10px 14px;
         }
         .kpi-card h3 {
-            margin: 0 0 2px 0; font-size: 0.72em; color: #888;
-            text-transform: uppercase; letter-spacing: 0.03em;
+            margin: 0 0 2px 0; font-size: 0.72em;
+            color: var(--text-secondary);
+            text-transform: uppercase; letter-spacing: 0.04em;
         }
         .kpi-card .big-value {
-            font-size: 1.4em; font-weight: 700; color: #0056b3; line-height: 1.1;
+            font-size: 1.35em; font-weight: 700; color: var(--accent); line-height: 1.1;
         }
 
-        /* Countries card */
+        /* --- Countries card (spans 2 rows) --- */
         .countries-card {
             grid-column: 3;
             grid-row: 1 / 3;
         }
-        .countries-card .countries-list {
-            list-style: none; padding: 0; margin: 6px 0 0 0;
-        }
-        .countries-card .countries-list li {
+        .countries-list { list-style: none; padding: 0; margin: 4px 0 0 0; flex: 1; overflow-y: auto; min-height: 0; }
+        .countries-list li {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 3px 0; border-bottom: 1px solid #f0f0f0;
-            font-size: 0.82em;
-        }
-        .countries-card .countries-list li:last-child { border-bottom: none; }
-        .country-label { display: flex; align-items: center; gap: 6px; color: #555; }
-        .country-flag { font-size: 1.1em; }
-        .country-value { font-weight: 600; color: #333; }
-        .country-bar-bg { width: 60px; height: 5px; background: #eee; border-radius: 3px; margin-left: 6px; }
-        .country-bar { height: 5px; background: #007bff; border-radius: 3px; transition: width 0.4s; }
-        .geoip-unavailable { color: #999; font-size: 0.8em; font-style: italic; }
-
-        /* World map card */
-        .map-card {
-            background: #fff;
-            border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-        }
-        .map-card h3 {
-            margin: 0 0 4px 0; font-size: 0.82em; color: #777;
-            text-transform: uppercase; letter-spacing: 0.03em;
-        }
-        #world-map-svg {
-            flex: 1;
-            width: 100%;
-            min-height: 0;
-        }
-        .map-tooltip {
-            position: absolute;
-            padding: 5px 10px;
-            background: rgba(0,0,0,0.8);
-            color: #fff;
+            padding: 3px 0; border-bottom: 1px solid var(--border);
             font-size: 0.8em;
-            border-radius: 4px;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.15s;
-            z-index: 100;
+        }
+        .countries-list li:last-child { border-bottom: none; }
+        .country-label { display: flex; align-items: center; gap: 6px; color: var(--text-primary); }
+        .country-flag { font-size: 1.05em; }
+        .country-value { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+        .country-bar-bg { width: 50px; height: 4px; background: var(--bg-elevated); border-radius: 2px; margin-left: 6px; overflow: hidden; }
+        .country-bar { height: 4px; background: var(--accent); border-radius: 2px; transition: width 0.4s; }
+        .geoip-unavailable { color: var(--text-secondary); font-size: 0.8em; font-style: italic; }
+
+        /* --- World map --- */
+        #world-map-container { flex: 1; min-height: 0; margin-top: 4px; overflow: hidden; }
+        #world-map-container svg { display: block; max-height: 100%; }
+        .map-tooltip {
+            position: absolute; padding: 5px 10px;
+            background: rgba(0,0,0,0.85); color: #fff;
+            font-size: 0.78em; border-radius: 4px;
+            pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 100;
         }
         .map-no-data {
             flex: 1; display: flex; align-items: center; justify-content: center;
-            color: #aaa; font-size: 0.9em; font-style: italic;
+            color: var(--text-secondary); font-size: 0.85em; font-style: italic;
         }
 
-        /* List cards (hosts, status, paths, uas) */
-        .list-card ul { list-style: none; padding: 0; margin: 4px 0 0 0; overflow-y: auto; flex: 1; }
+        /* --- List cards (status, hosts, paths, uas) --- */
+        .list-card ul {
+            list-style: none; padding: 0; margin: 4px 0 0 0;
+            overflow-y: auto; flex: 1; min-height: 0;
+        }
         .list-card ul li {
             display: flex; justify-content: space-between; padding: 2px 0;
-            border-bottom: 1px solid #f0f0f0; font-size: 0.78em;
+            border-bottom: 1px solid var(--border); font-size: 0.78em;
         }
         .list-card ul li:last-child { border-bottom: none; }
         .list-card .label {
-            color: #555; white-space: nowrap; overflow: hidden;
+            color: var(--text-secondary); white-space: nowrap; overflow: hidden;
             text-overflow: ellipsis; max-width: 68%;
         }
-        .list-card .value { font-weight: 600; color: #333; white-space: nowrap; }
+        .list-card .value { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
 
-        /* Chart card */
-        .chart-card {
-            background: #fff;
-            border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 10px 14px;
-            display: flex;
-            flex-direction: column;
-        }
-        .chart-card h3 { margin: 0 0 2px 0; font-size: 0.82em; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
-        .chart-card canvas { flex: 1; min-height: 0; }
-
-        /* Status codes inline */
+        /* --- Status bar --- */
         .status-row {
-            display: flex; gap: 2px; margin-top: 4px; height: 8px; border-radius: 4px; overflow: hidden;
+            display: flex; gap: 1px; margin-top: 4px; height: 6px; border-radius: 3px; overflow: hidden;
+            flex-shrink: 0;
         }
-        .status-segment { height: 8px; transition: width 0.4s; min-width: 2px; }
-        .status-2xx { background: #28a745; }
-        .status-3xx { background: #17a2b8; }
-        .status-4xx { background: #ffc107; }
-        .status-5xx { background: #dc3545; }
-        .status-1xx { background: #6c757d; }
+        .status-segment { height: 6px; min-width: 2px; transition: width 0.4s; }
+        .status-2xx { background: #22c55e; }
+        .status-3xx { background: #06b6d4; }
+        .status-4xx { background: #f59e0b; }
+        .status-5xx { background: #ef4444; }
+        .status-1xx { background: #6b7280; }
+        .status-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; font-size: 0.72em; color: var(--text-secondary); flex-shrink: 0; overflow-y: auto; }
+        .status-legend-item { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
-        .status-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: 0.75em; }
-        .status-legend-item { display: flex; align-items: center; gap: 3px; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        /* --- Chart card --- */
+        .chart-card { grid-column: 3; grid-row: 3; }
+        .chart-card canvas { flex: 1; min-height: 0; max-height: 100%; }
 
-        /* Messages */
+        /* --- Messages --- */
         #loading-message, #log-config-action-area {
             text-align: center; font-size: 1em; padding: 12px;
-            border: 1px dashed #ccc; border-radius: 4px; flex-shrink: 0;
+            border: 1px dashed var(--border-strong); border-radius: 4px; flex-shrink: 0;
+            color: var(--text-secondary);
         }
         #log-config-action-area button { margin-top: 6px; }
-
-        /* ===== Dark themes ===== */
-        body.theme-dark-blue, body.theme-dark-green, body.theme-dark-violet,
-        body.theme-dark-orange, body.theme-dark-gray {
-            background: #1e1e1e; color: #ddd;
-        }
-
-        body.theme-dark-blue .stats-header, body.theme-dark-green .stats-header,
-        body.theme-dark-violet .stats-header, body.theme-dark-orange .stats-header,
-        body.theme-dark-gray .stats-header { border-bottom-color: #444; }
-
-        body.theme-dark-blue .stat-card, body.theme-dark-green .stat-card,
-        body.theme-dark-violet .stat-card, body.theme-dark-orange .stat-card,
-        body.theme-dark-gray .stat-card,
-        body.theme-dark-blue .kpi-card, body.theme-dark-green .kpi-card,
-        body.theme-dark-violet .kpi-card, body.theme-dark-orange .kpi-card,
-        body.theme-dark-gray .kpi-card,
-        body.theme-dark-blue .chart-card, body.theme-dark-green .chart-card,
-        body.theme-dark-violet .chart-card, body.theme-dark-orange .chart-card,
-        body.theme-dark-gray .chart-card,
-        body.theme-dark-blue .map-card, body.theme-dark-green .map-card,
-        body.theme-dark-violet .map-card, body.theme-dark-orange .map-card,
-        body.theme-dark-gray .map-card {
-            background-color: #2b2b2b;
-        }
-
-        body.theme-dark-blue .stat-card h3, body.theme-dark-green .stat-card h3,
-        body.theme-dark-violet .stat-card h3, body.theme-dark-orange .stat-card h3,
-        body.theme-dark-gray .stat-card h3,
-        body.theme-dark-blue .kpi-card h3, body.theme-dark-green .kpi-card h3,
-        body.theme-dark-violet .kpi-card h3, body.theme-dark-orange .kpi-card h3,
-        body.theme-dark-gray .kpi-card h3,
-        body.theme-dark-blue .chart-card h3, body.theme-dark-green .chart-card h3,
-        body.theme-dark-violet .chart-card h3, body.theme-dark-orange .chart-card h3,
-        body.theme-dark-gray .chart-card h3,
-        body.theme-dark-blue .map-card h3, body.theme-dark-green .map-card h3,
-        body.theme-dark-violet .map-card h3, body.theme-dark-orange .map-card h3,
-        body.theme-dark-gray .map-card h3 {
-            color: #aaa;
-        }
-
-        body.theme-dark-blue .kpi-card .big-value { color: #45aadd; }
-        body.theme-dark-green .kpi-card .big-value { color: #8fbc8f; }
-        body.theme-dark-violet .kpi-card .big-value { color: #c390f0; }
-        body.theme-dark-orange .kpi-card .big-value { color: #ffb766; }
-        body.theme-dark-gray .kpi-card .big-value { color: #bbb; }
-
-        body.theme-dark-blue .stat-card .big-value { color: #45aadd; }
-        body.theme-dark-green .stat-card .big-value { color: #8fbc8f; }
-        body.theme-dark-violet .stat-card .big-value { color: #c390f0; }
-        body.theme-dark-orange .stat-card .big-value { color: #ffb766; }
-        body.theme-dark-gray .stat-card .big-value { color: #bbb; }
-
-        body.theme-dark-blue .list-card .label, body.theme-dark-green .list-card .label,
-        body.theme-dark-violet .list-card .label, body.theme-dark-orange .list-card .label,
-        body.theme-dark-gray .list-card .label { color: #aaa; }
-        body.theme-dark-blue .list-card .value, body.theme-dark-green .list-card .value,
-        body.theme-dark-violet .list-card .value, body.theme-dark-orange .list-card .value,
-        body.theme-dark-gray .list-card .value { color: #ddd; }
-        body.theme-dark-blue .list-card ul li, body.theme-dark-green .list-card ul li,
-        body.theme-dark-violet .list-card ul li, body.theme-dark-orange .list-card ul li,
-        body.theme-dark-gray .list-card ul li { border-bottom-color: #3f3f3f; }
-
-        body.theme-dark-blue .period-btn, body.theme-dark-green .period-btn,
-        body.theme-dark-violet .period-btn, body.theme-dark-orange .period-btn,
-        body.theme-dark-gray .period-btn {
-            background: #2b2b2b; color: #ccc; border-color: #555;
-        }
-        body.theme-dark-blue .period-btn:hover, body.theme-dark-green .period-btn:hover,
-        body.theme-dark-violet .period-btn:hover, body.theme-dark-orange .period-btn:hover,
-        body.theme-dark-gray .period-btn:hover { background: #3c3c3c; }
-        body.theme-dark-blue .period-btn.active { background: #457b9d; color: #f1faee; border-color: #457b9d; }
-        body.theme-dark-green .period-btn.active { background: #52796f; color: #fff; border-color: #52796f; }
-        body.theme-dark-violet .period-btn.active { background: #7b2cbf; color: #f4e8ff; border-color: #7b2cbf; }
-        body.theme-dark-orange .period-btn.active { background: #cc6600; color: #fff0e0; border-color: #cc6600; }
-        body.theme-dark-gray .period-btn.active { background: #555; color: #e0e0e0; border-color: #555; }
-
-        body.theme-dark-blue .host-filter select, body.theme-dark-green .host-filter select,
-        body.theme-dark-violet .host-filter select, body.theme-dark-orange .host-filter select,
-        body.theme-dark-gray .host-filter select {
-            background: #2b2b2b; color: #ccc; border-color: #555;
-        }
-        body.theme-dark-blue .host-filter label, body.theme-dark-green .host-filter label,
-        body.theme-dark-violet .host-filter label, body.theme-dark-orange .host-filter label,
-        body.theme-dark-gray .host-filter label { color: #aaa; }
-
-        body.theme-dark-blue .data-period, body.theme-dark-green .data-period,
-        body.theme-dark-violet .data-period, body.theme-dark-orange .data-period,
-        body.theme-dark-gray .data-period { color: #888; }
-
-        body.theme-dark-blue #loading-message, body.theme-dark-green #loading-message,
-        body.theme-dark-violet #loading-message, body.theme-dark-orange #loading-message,
-        body.theme-dark-gray #loading-message,
-        body.theme-dark-blue #log-config-action-area, body.theme-dark-green #log-config-action-area,
-        body.theme-dark-violet #log-config-action-area, body.theme-dark-orange #log-config-action-area,
-        body.theme-dark-gray #log-config-action-area { border-color: #555; }
-
-        body.theme-dark-blue .country-label, body.theme-dark-green .country-label,
-        body.theme-dark-violet .country-label, body.theme-dark-orange .country-label,
-        body.theme-dark-gray .country-label { color: #bbb; }
-        body.theme-dark-blue .country-value, body.theme-dark-green .country-value,
-        body.theme-dark-violet .country-value, body.theme-dark-orange .country-value,
-        body.theme-dark-gray .country-value { color: #ddd; }
-        body.theme-dark-blue .country-bar-bg, body.theme-dark-green .country-bar-bg,
-        body.theme-dark-violet .country-bar-bg, body.theme-dark-orange .country-bar-bg,
-        body.theme-dark-gray .country-bar-bg { background: #3f3f3f; }
-        body.theme-dark-blue .country-bar { background: #45aadd; }
-        body.theme-dark-green .country-bar { background: #8fbc8f; }
-        body.theme-dark-violet .country-bar { background: #7b2cbf; }
-        body.theme-dark-orange .country-bar { background: #cc6600; }
-        body.theme-dark-gray .country-bar { background: #666; }
-
-        body.theme-dark-blue .geoip-unavailable, body.theme-dark-green .geoip-unavailable,
-        body.theme-dark-violet .geoip-unavailable, body.theme-dark-orange .geoip-unavailable,
-        body.theme-dark-gray .geoip-unavailable { color: #666; }
     </style>
 </head>
 <body>
@@ -382,7 +244,7 @@
         <!-- Main content grid -->
         <div id="stats-content" class="stats-body" style="display:none;">
 
-            <!-- Row 1: KPIs (left) + Top Countries (right) -->
+            <!-- Row 1: KPIs (cols 1-2) + Countries (col 3) -->
             <div class="kpi-row">
                 <div class="kpi-card">
                     <h3>Requests</h3>
@@ -402,71 +264,61 @@
                 </div>
             </div>
 
-            <div class="stat-card countries-card">
+            <div class="card countries-card">
                 <h3>Top Countries</h3>
                 <div id="countries-content">
                     <ul class="countries-list" id="top-countries-list"></ul>
                 </div>
+                <div id="world-map-container"></div>
             </div>
 
-            <!-- Row 2: Status (left) + Hosts (center) + World Map (right, spans row 2) -->
-            <div class="stat-card list-card">
+            <!-- Row 2: Status (col 1) + Hosts (col 2) + (countries spans from row 1) -->
+            <div class="card list-card">
                 <h3>Status Codes</h3>
                 <div class="status-row" id="status-bar"></div>
                 <div class="status-legend" id="status-legend"></div>
             </div>
 
-            <div class="stat-card list-card">
+            <div class="card list-card">
                 <h3>Requests by Host</h3>
                 <ul id="requests-by-host"></ul>
             </div>
 
-            <!-- Row 3: Top Paths (left) + Top UAs (center) + Chart (right) -->
-            <div class="stat-card list-card">
+            <!-- Row 3: Paths (col 1) + UAs (col 2) + Chart (col 3) -->
+            <div class="card list-card">
                 <h3>Top Paths</h3>
                 <ul id="top-paths"></ul>
             </div>
 
-            <div class="stat-card list-card">
+            <div class="card list-card">
                 <h3>User Agents</h3>
                 <ul id="top-user-agents"></ul>
             </div>
 
-            <div class="chart-card">
+            <div class="card chart-card">
                 <h3 id="chart-title">Requests per Hour</h3>
                 <canvas id="requests-timeseries-chart"></canvas>
             </div>
         </div>
     </div>
 
-    <!-- World map (rendered separately below the grid for layering) -->
-    <div id="map-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:50;">
-        <div id="map-container" style="position:absolute; pointer-events:auto;"></div>
-    </div>
-
     <div class="map-tooltip" id="map-tooltip"></div>
 
     <script>
-        // --- State ---
         let currentPeriod = '7d';
         let currentHost = null;
-
-        // --- URL params ---
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('period')) currentPeriod = urlParams.get('period');
         if (urlParams.has('host'))   currentHost  = urlParams.get('host') || null;
 
-        // --- Country code → flag emoji ---
+        // Country code → flag emoji
         function countryFlag(code) {
             if (!code || code === 'Unknown' || code.length !== 2) return '🌍';
-            const base = 0x1F1E6;
-            const c1 = code.charCodeAt(0) - 65;
-            const c2 = code.charCodeAt(1) - 65;
+            const c1 = code.charCodeAt(0) - 65, c2 = code.charCodeAt(1) - 65;
             if (c1 < 0 || c1 > 25 || c2 < 0 || c2 > 25) return '🌍';
-            return String.fromCodePoint(base + c1, base + 0x1F1E6 + c2);
+            return String.fromCodePoint(0x1F1E6 + c1, 0x1F1E6 + c2);
         }
 
-        // --- ISO country code → name (most common) ---
         const COUNTRY_NAMES = {
             AF:'Afghanistan',AL:'Albania',DZ:'Algeria',AD:'Andorra',AO:'Angola',AG:'Antigua',AR:'Argentina',AM:'Armenia',
             AU:'Australia',AT:'Austria',AZ:'Azerbaijan',BS:'Bahamas',BH:'Bahrain',BD:'Bangladesh',BY:'Belarus',BE:'Belgium',
@@ -484,16 +336,13 @@
             NO:'Norway',OM:'Oman',PK:'Pakistan',PA:'Panama',PY:'Paraguay',PE:'Peru',PH:'Philippines',PL:'Poland',
             PT:'Portugal',QA:'Qatar',RO:'Romania',RU:'Russia',RW:'Rwanda',SA:'Saudi Arabia',SN:'Senegal',
             RS:'Serbia',SG:'Singapore',SK:'Slovakia',SI:'Slovenia',SO:'Somalia',ZA:'South Africa',ES:'Spain',
-            LK:'Sri Lanka',SD:'Sudan',SE:'Sweden',CH:'Switzerland',SY:'Syria',TW:'Taiwan',TJ:'Tajikistan',
+            LK:'Sri Lanka',SE:'Sweden',CH:'Switzerland',TW:'Taiwan',TJ:'Tajikistan',
             TZ:'Tanzania',TH:'Thailand',TN:'Tunisia',TR:'Turkey',TM:'Turkmenistan',UG:'Uganda',UA:'Ukraine',
             AE:'UAE',GB:'United Kingdom',US:'United States',UY:'Uruguay',UZ:'Uzbekistan',VE:'Venezuela',
             VN:'Vietnam',YE:'Yemen',ZM:'Zambia',ZW:'Zimbabwe'
         };
-        function countryName(code) {
-            return COUNTRY_NAMES[code] || code;
-        }
+        function countryName(code) { return COUNTRY_NAMES[code] || code; }
 
-        // --- Toast ---
         function showToast(message, type = 'info', duration = 5000) {
             const c = document.getElementById('toast-container');
             if (!c) { alert(message); return; }
@@ -509,14 +358,12 @@
             setTimeout(() => { if (t.classList.contains('show')) b.click(); }, duration);
         }
 
-        // --- Theme ---
         function applyStoredTheme() {
             const s = localStorage.getItem('caddyPanelTheme');
             document.body.className = '';
             document.body.classList.add(s || 'theme-light-gray');
         }
 
-        // --- Load hosts ---
         async function loadHosts() {
             try {
                 const res = await fetch("{{ url_for('get_stats_hosts') }}");
@@ -537,31 +384,21 @@
             } catch (e) { console.error('Error loading hosts:', e); }
         }
 
-        // --- Period buttons ---
         function setActivePeriod(period) {
             currentPeriod = period;
-            document.querySelectorAll('.period-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.period === period);
-            });
+            document.querySelectorAll('.period-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.period === period));
         }
 
         function updateChartTitle(period) {
-            const title = document.getElementById('chart-title');
-            title.textContent = (period === '24h' || period === '7d') ? 'Requests per Hour' : 'Requests per Day';
+            document.getElementById('chart-title').textContent = (period === '24h' || period === '7d') ? 'Requests per Hour' : 'Requests per Day';
         }
 
         function updatePageTitle(host) {
             const h1 = document.getElementById('page-title');
-            if (host) {
-                h1.textContent = `Stats — ${host}`;
-                document.title = `Stats - ${host} - CaddyPanel`;
-            } else {
-                h1.textContent = 'Global Statistics';
-                document.title = 'Statistics - CaddyPanel';
-            }
+            h1.textContent = host ? `Stats — ${host}` : 'Global Statistics';
+            document.title = host ? `Stats - ${host} - CaddyPanel` : 'Statistics - CaddyPanel';
         }
 
-        // --- Populate list ---
         function populateList(ulId, data, defaultText = 'No data.') {
             const ul = document.getElementById(ulId);
             ul.innerHTML = '';
@@ -580,18 +417,16 @@
             }
         }
 
-        // --- Status bar + legend ---
         function renderStatusBar(dist) {
             const bar = document.getElementById('status-bar');
             const legend = document.getElementById('status-legend');
-            bar.innerHTML = '';
-            legend.innerHTML = '';
+            bar.innerHTML = ''; legend.innerHTML = '';
             const total = Object.values(dist).reduce((a,b) => a+b, 0);
-            if (!total) { bar.innerHTML = '<div style="width:100%;background:#eee;height:8px;border-radius:4px;"></div>'; return; }
+            if (!total) return;
             const codes = ['1xx','2xx','3xx','4xx','5xx'];
             codes.forEach(code => {
                 const count = dist[code] || 0;
-                const pct = (count / total * 100);
+                const pct = count / total * 100;
                 if (count > 0) {
                     const seg = document.createElement('div');
                     seg.className = `status-segment status-${code}`;
@@ -605,10 +440,8 @@
             });
         }
 
-        // --- Countries list ---
         function renderCountries(countries) {
             const ul = document.getElementById('top-countries-list');
-            const content = document.getElementById('countries-content');
             ul.innerHTML = '';
             if (!countries || countries.length === 0) {
                 ul.innerHTML = '<li class="geoip-unavailable">No country data available</li>';
@@ -632,63 +465,35 @@
         }
 
         // --- World map (D3 + TopoJSON) ---
-        let worldMapRendered = false;
-        let mapSvg = null;
-        let countryPaths = null;
-
         async function renderWorldMap(countryData) {
-            const mapCard = document.querySelector('.countries-card');
-            // Remove any old map container inside the countries card
-            let mapDiv = document.getElementById('world-map-container');
-            if (!mapDiv) {
-                mapDiv = document.createElement('div');
-                mapDiv.id = 'world-map-container';
-                mapDiv.style.cssText = 'flex:1;min-height:0;margin-top:6px;';
-                document.getElementById('countries-content').after(mapDiv);
-            }
-            // Clear previous SVG
+            const mapDiv = document.getElementById('world-map-container');
             mapDiv.innerHTML = '';
-
             if (!countryData || countryData.length === 0) {
                 mapDiv.innerHTML = '<div class="map-no-data">No geographic data</div>';
                 return;
             }
-
             try {
                 const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
                 const countries = topojson.feature(world, world.objects.countries);
                 const borders = topojson.mesh(world, world.objects.countries, (a, b) => a !== b);
 
-                // Build a lookup: ISO numeric → count
-                // world-atlas uses numeric IDs; we need to map ISO A2 → numeric
-                // The features have .id which is the ISO 3166-1 numeric code (as string)
-                const countMap = {};
-                const maxCount = countryData[0]?.count || 1;
-                countryData.forEach(c => { countMap[c.country] = c.count; });
-
-                // ISO A2 → numeric mapping (common countries)
                 const A2_TO_NUMERIC = {
-                    AF:'004',AL:'008',DZ:'012',AD:'020',AO:'024',AG:'028',AR:'032',AM:'051',
-                    AU:'036',AT:'040',AZ:'031',BS:'044',BH:'048',BD:'050',BY:'112',BE:'056',
-                    BZ:'084',BJ:'204',BO:'068',BA:'070',BW:'072',BR:'076',BN:'096',BG:'100',
-                    BF:'854',BI:'108',KH:'116',CM:'120',CA:'124',CV:'132',CF:'140',TD:'148',
-                    CL:'152',CN:'156',CO:'170',CD:'180',CR:'188',HR:'191',CU:'192',CY:'196',
-                    CZ:'203',DK:'208',DJ:'262',DO:'214',EC:'218',EG:'818',SV:'222',EE:'233',
-                    ET:'231',FI:'246',FR:'250',GA:'266',GE:'268',DE:'276',GH:'288',GR:'300',
-                    GT:'320',GN:'324',HT:'332',HN:'340',HU:'348',IS:'352',IN:'356',ID:'360',
-                    IR:'364',IQ:'368',IE:'372',IL:'376',IT:'380',JM:'388',JP:'392',JO:'400',
-                    KZ:'398',KE:'404',KR:'410',KW:'414',LV:'428',LB:'422',LY:'434',LT:'440',
-                    LU:'442',MG:'450',MY:'458',ML:'466',MT:'470',MX:'484',MD:'498',MA:'504',
-                    MZ:'508',MM:'104',NA:'516',NP:'524',NL:'528',NZ:'554',NI:'558',NE:'562',
-                    NG:'566',MK:'807',NO:'578',OM:'512',PK:'586',PA:'591',PY:'600',PE:'604',
-                    PH:'608',PL:'616',PT:'620',QA:'634',RO:'642',RU:'643',RW:'646',SA:'682',
-                    SN:'686',RS:'688',SG:'702',SK:'703',SI:'705',SO:'706',ZA:'710',ES:'724',
-                    LK:'144',SD:'729',SE:'752',CH:'756',SY:'760',TW:'158',TJ:'762',TZ:'834',
-                    TH:'764',TN:'788',TR:'792',TM:'795',UG:'800',UA:'804',AE:'784',GB:'826',
-                    US:'840',UY:'858',UZ:'860',VE:'862',VN:'704',YE:'887',ZM:'894',ZW:'716',
-                    IL:'376',PS:'275',IO:'086'
+                    AF:'004',AL:'008',DZ:'012',AD:'020',AO:'024',AG:'028',AR:'032',AM:'051',AU:'036',AT:'040',AZ:'031',
+                    BS:'044',BH:'048',BD:'050',BY:'112',BE:'056',BZ:'084',BJ:'204',BO:'068',BA:'070',BW:'072',BR:'076',
+                    BN:'096',BG:'100',BF:'854',BI:'108',KH:'116',CM:'120',CA:'124',CV:'132',CF:'140',TD:'148',CL:'152',
+                    CN:'156',CO:'170',CD:'180',CR:'188',HR:'191',CU:'192',CY:'196',CZ:'203',DK:'208',DJ:'262',DO:'214',
+                    EC:'218',EG:'818',SV:'222',EE:'233',ET:'231',FI:'246',FR:'250',GA:'266',GE:'268',DE:'276',GH:'288',
+                    GR:'300',GT:'320',GN:'324',HT:'332',HN:'340',HU:'348',IS:'352',IN:'356',ID:'360',IR:'364',IQ:'368',
+                    IE:'372',IL:'376',IT:'380',JM:'388',JP:'392',JO:'400',KZ:'398',KE:'404',KR:'410',KW:'414',LV:'428',
+                    LB:'422',LY:'434',LT:'440',LU:'442',MG:'450',MY:'458',ML:'466',MT:'470',MX:'484',MD:'498',MA:'504',
+                    MZ:'508',MM:'104',NA:'516',NP:'524',NL:'528',NZ:'554',NI:'558',NE:'562',NG:'566',MK:'807',NO:'578',
+                    OM:'512',PK:'586',PA:'591',PY:'600',PE:'604',PH:'608',PL:'616',PT:'620',QA:'634',RO:'642',RU:'643',
+                    RW:'646',SA:'682',SN:'686',RS:'688',SG:'702',SK:'703',SI:'705',SO:'706',ZA:'710',ES:'724',LK:'144',
+                    SD:'729',SE:'752',CH:'756',SY:'760',TW:'158',TJ:'762',TZ:'834',TH:'764',TN:'788',TR:'792',TM:'795',
+                    UG:'800',UA:'804',AE:'784',GB:'826',US:'840',UY:'858',UZ:'860',VE:'862',VN:'704',YE:'887',ZM:'894',
+                    ZW:'716',PS:'275'
                 };
-
+                const maxCount = countryData[0]?.count || 1;
                 const countByNumeric = {};
                 countryData.forEach(c => {
                     const num = A2_TO_NUMERIC[c.country];
@@ -696,52 +501,43 @@
                 });
 
                 const isDark = Array.from(document.body.classList).some(c => c.startsWith('theme-dark-'));
-                const landColor = isDark ? '#3a3a3a' : '#e0e0e0';
-                const borderCol = isDark ? '#555' : '#fff';
-                const oceanCol  = isDark ? '#1e1e1e' : '#f5f5f5';
+                const landColor = isDark ? '#374151' : '#e5e7eb';
+                const borderCol = isDark ? '#4b5563' : '#f9fafb';
+                const oceanCol  = isDark ? '#111827' : '#f3f4f6';
 
                 const width = mapDiv.clientWidth || 300;
                 const height = mapDiv.clientHeight || 150;
 
-                const projection = d3.geoNaturalEarth1()
-                    .fitSize([width, height], countries)
-                    .precision(0.1);
-
+                const projection = d3.geoNaturalEarth1().fitSize([width, height], countries).precision(0.1);
                 const path = d3.geoPath(projection);
+                const tooltip = document.getElementById('map-tooltip');
+
+                // Accent color for scale
+                const accentStyle = getComputedStyle(document.body);
+                const accentColor = accentStyle.getPropertyValue('--accent').trim() || '#3b82f6';
 
                 const svg = d3.select(mapDiv).append('svg')
-                    .attr('id', 'world-map-svg')
-                    .attr('width', width)
-                    .attr('height', height)
-                    .style('display', 'block');
+                    .attr('width', width).attr('height', height)
+                    .style('display', 'block')
+                    .style('max-height', '100%');
 
-                // Ocean background
                 svg.append('rect').attr('width', width).attr('height', height).attr('fill', oceanCol);
 
-                // Color scale
-                const colorScale = d3.scaleSequential(d3.interpolateYlOrRd)
-                    .domain([0, maxCount || 1]);
-
-                // Country paths
-                const tooltip = document.getElementById('map-tooltip');
+                const colorScale = d3.scaleSequential(d3.interpolateYlOrRd).domain([0, maxCount || 1]);
 
                 svg.selectAll('path.country')
                     .data(countries.features)
-                    .enter()
-                    .append('path')
+                    .enter().append('path')
                     .attr('class', 'country')
                     .attr('d', path)
-                    .attr('fill', d => {
-                        const cnt = countByNumeric[d.id];
-                        return cnt ? colorScale(cnt) : landColor;
-                    })
+                    .attr('fill', d => countByNumeric[d.id] ? colorScale(countByNumeric[d.id]) : landColor)
                     .attr('stroke', borderCol)
                     .attr('stroke-width', 0.3)
                     .on('mouseover', function(event, d) {
                         const cnt = countByNumeric[d.id];
                         if (cnt) {
-                            d3.select(this).attr('stroke', isDark ? '#aaa' : '#333').attr('stroke-width', 1);
-                            tooltip.textContent = `${d.properties?.name || d.id}: ${cnt.toLocaleString()} requests`;
+                            d3.select(this).attr('stroke', isDark ? '#9ca3af' : '#374151').attr('stroke-width', 1);
+                            tooltip.textContent = `${d.properties?.name || d.id}: ${cnt.toLocaleString()} req`;
                             tooltip.style.opacity = 1;
                         }
                     })
@@ -749,12 +545,11 @@
                         tooltip.style.left = (event.pageX + 12) + 'px';
                         tooltip.style.top = (event.pageY - 20) + 'px';
                     })
-                    .on('mouseout', function(event, d) {
+                    .on('mouseout', function() {
                         d3.select(this).attr('stroke', borderCol).attr('stroke-width', 0.3);
                         tooltip.style.opacity = 0;
                     });
 
-                // Borders
                 svg.append('path')
                     .datum(borders)
                     .attr('fill', 'none')
@@ -768,23 +563,18 @@
             }
         }
 
-        // --- Chart ---
         function renderChart(canvas, timeseries, period) {
             let existing = Chart.getChart(canvas);
             if (existing) existing.destroy();
-
-            if (!timeseries || timeseries.length === 0) {
-                canvas.style.display = 'none';
-                return;
-            }
+            if (!timeseries || timeseries.length === 0) { canvas.style.display = 'none'; return; }
             canvas.style.display = 'block';
 
             const isDark = Array.from(document.body.classList).some(c => c.startsWith('theme-dark-'));
-            const tickColor   = isDark ? '#ccc' : '#666';
-            const legendColor = isDark ? '#ccc' : '#333';
-            const gridColor   = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
-            const borderColor = isDark ? 'rgba(75,192,192,1)' : 'rgba(0,123,255,1)';
-            const bgColor     = isDark ? 'rgba(75,192,192,0.2)' : 'rgba(0,123,255,0.2)';
+            const tickC   = isDark ? '#9ca3af' : '#6b7280';
+            const legendC = isDark ? '#e5e7eb' : '#374151';
+            const gridC   = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+            const accent  = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#3b82f6';
+            const bgFill  = isDark ? 'rgba(96,165,250,0.15)' : 'rgba(59,130,246,0.12)';
 
             new Chart(canvas.getContext('2d'), {
                 type: 'line',
@@ -793,35 +583,32 @@
                     datasets: [{
                         label: 'Requests',
                         data: timeseries.map(d => d.count),
-                        borderColor: borderColor,
-                        backgroundColor: bgColor,
-                        tension: 0.1,
-                        fill: true,
+                        borderColor: accent,
+                        backgroundColor: bgFill,
+                        tension: 0.1, fill: true,
                         pointRadius: timeseries.length > 100 ? 0 : 2,
                     }]
                 },
                 options: {
                     scales: {
                         x: {
-                            title: { display: true, text: period === '24h' || period === '7d' ? 'Time (UTC)' : 'Date (UTC)', color: legendColor },
-                            ticks: { color: tickColor, maxTicksLimit: 12, autoSkip: true },
-                            grid: { color: gridColor },
+                            title: { display: true, text: (period === '24h' || period === '7d') ? 'Time (UTC)' : 'Date (UTC)', color: legendC },
+                            ticks: { color: tickC, maxTicksLimit: 12, autoSkip: true },
+                            grid: { color: gridC },
                         },
                         y: {
                             beginAtZero: true,
-                            title: { display: true, text: 'Requests', color: legendColor },
-                            ticks: { color: tickColor },
-                            grid: { color: gridColor },
+                            title: { display: true, text: 'Requests', color: legendC },
+                            ticks: { color: tickC },
+                            grid: { color: gridC },
                         }
                     },
-                    plugins: { legend: { labels: { color: legendColor } } },
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: legendC } } },
+                    responsive: true, maintainAspectRatio: false,
                 }
             });
         }
 
-        // --- Main fetch + display ---
         async function fetchAndDisplayStats() {
             const loadingEl  = document.getElementById('loading-message');
             const contentEl  = document.getElementById('stats-content');
@@ -850,87 +637,59 @@
                 const stats = await res.json();
 
                 if (stats.log_read_error) {
-                    logMsg.innerHTML = `<strong>Warning:</strong> ${stats.log_read_error}<br>Ensure Caddy is configured for JSON logging.`;
+                    logMsg.innerHTML = `<strong>Warning:</strong> ${stats.log_read_error}`;
                     logArea.style.display = 'block';
                     loadingEl.style.display = 'none';
                 } else {
                     loadingEl.style.display = 'none';
                     logArea.style.display = 'none';
                 }
-
                 contentEl.style.display = 'grid';
 
-                // KPI cards
                 document.getElementById('total-requests').textContent = (stats.total_requests || 0).toLocaleString();
                 document.getElementById('error-rate').textContent = (stats.error_rate_percent || 0).toFixed(1) + '%';
                 document.getElementById('avg-response-time').textContent = (stats.avg_response_time_ms || 0).toFixed(0) + ' ms';
                 document.getElementById('avg-response-size').textContent = (stats.avg_response_size_kb || 0).toFixed(1) + ' KB';
 
-                // Data period
-                if (stats.data_from_utc && stats.data_from_utc !== 'N/A') {
+                if (stats.data_from_utc && stats.data_from_utc !== 'N/A')
                     periodEl.textContent = `${stats.data_from_utc} → ${stats.data_to_utc}`;
-                } else if (!stats.log_read_error) {
-                    periodEl.textContent = '';
-                } else {
-                    periodEl.textContent = '';
-                }
+                else periodEl.textContent = '';
 
-                // Status bar
                 renderStatusBar(stats.status_codes_dist || {});
-
-                // Lists
                 populateList('requests-by-host', stats.requests_by_host, 'No host data.');
                 populateList('top-paths', stats.top_paths, 'No path data.');
                 populateList('top-user-agents', stats.top_user_agents, 'No UA data.');
-
-                // Countries
                 renderCountries(stats.top_countries || []);
-
-                // World map
                 renderWorldMap(stats.top_countries || []);
 
-                // Chart
                 const canvas = document.getElementById('requests-timeseries-chart');
                 renderChart(canvas, stats.requests_timeseries, currentPeriod);
 
             } catch (err) {
                 console.error('Error fetching stats:', err);
                 loadingEl.textContent = `Error: ${err.message}`;
-                loadingEl.style.color = 'red';
+                loadingEl.style.color = '#ef4444';
                 loadingEl.style.display = 'block';
                 contentEl.style.display = 'none';
             }
         }
 
-        // --- Event listeners ---
         document.addEventListener('DOMContentLoaded', async () => {
             applyStoredTheme();
             setActivePeriod(currentPeriod);
-
             await loadHosts();
             await fetchAndDisplayStats();
 
-            // Period buttons
             document.querySelectorAll('.period-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    setActivePeriod(btn.dataset.period);
-                    fetchAndDisplayStats();
-                });
+                btn.addEventListener('click', () => { setActivePeriod(btn.dataset.period); fetchAndDisplayStats(); });
             });
+            document.getElementById('host-select').addEventListener('change', (e) => { currentHost = e.target.value || null; fetchAndDisplayStats(); });
 
-            // Host dropdown
-            document.getElementById('host-select').addEventListener('change', (e) => {
-                currentHost = e.target.value || null;
-                fetchAndDisplayStats();
-            });
-
-            // Configure logging button
             const cfgBtn = document.getElementById('configure-logging-btn');
             if (cfgBtn) {
                 cfgBtn.addEventListener('click', async () => {
                     showToast('Configuring Caddyfile for logging...', 'info', 10000);
-                    cfgBtn.disabled = true;
-                    cfgBtn.textContent = 'Configuring...';
+                    cfgBtn.disabled = true; cfgBtn.textContent = 'Configuring...';
                     try {
                         const res = await fetch("{{ url_for('configure_caddyfile_logging') }}", { method: 'POST' });
                         const result = await res.json();
@@ -942,12 +701,8 @@
                             showToast(result.message + (result.details ? ` Details: ${result.details}` : ''),
                                       result.status === 'warning' ? 'warning' : 'danger', 10000);
                         }
-                    } catch (err) {
-                        showToast(`Error: ${err.message}`, 'danger', 10000);
-                    } finally {
-                        cfgBtn.disabled = false;
-                        cfgBtn.textContent = 'Configure Caddy Logging';
-                    }
+                    } catch (err) { showToast(`Error: ${err.message}`, 'danger', 10000); }
+                    finally { cfgBtn.disabled = false; cfgBtn.textContent = 'Configure Caddy Logging'; }
                 });
             }
         });

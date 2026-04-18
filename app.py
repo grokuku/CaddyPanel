@@ -30,7 +30,8 @@ DEFAULT_PREFERENCES = {
     "theme": "theme-light-gray",
     "caddyfilePath": str(CADDY_CONFIG_FILE), 
     "globalAdminEmail": "", 
-    "maxmindLicenseKey": "", 
+    "maxmindAccountId": "", 
+    "maxmindLicenseKey": "",
     "defaultAuthentikEnabled": False, 
     "defaultAuthentikOutpostUrl": "http://authentik.local:9000", 
     "defaultAuthentikUri": "/outpost.goauthentik.io/auth/caddy", 
@@ -217,7 +218,11 @@ def logout():
 @login_required
 def get_preferences():
     prefs = load_preferences()
-    # Don't expose the license key in full — just indicate if it's set
+    # Don't expose credentials in full — just indicate if set
+    if prefs.get('maxmindAccountId'):
+        prefs['maxmindAccountId'] = '****' + prefs['maxmindAccountId'][-3:]
+    else:
+        prefs['maxmindAccountId'] = ''
     if prefs.get('maxmindLicenseKey'):
         prefs['maxmindLicenseKey'] = '********' + prefs['maxmindLicenseKey'][-4:]
     else:
@@ -245,6 +250,7 @@ def post_preferences():
                 if key == "globalAdminEmail" and value and not re.match(r"[^@]+@[^@]+\.[^@]+", value): validation_errors.append(f"Invalid format for '{key}'")
                 elif key == "caddyfilePath": value = str(CADDY_CONFIG_FILE)
                 elif key == "maxmindLicenseKey" and value and value.startswith('********'): value = current_prefs.get(key, '')  # Keep existing key if masked value sent
+                elif key == "maxmindAccountId" and value and value.startswith('****'): value = current_prefs.get(key, '')  # Keep existing account ID if masked value sent
                 if not any(err.startswith(f"Invalid type for '{key}'") or (f"Invalid format for '{key}'" in err) for err in validation_errors):
                      validated_prefs[key] = value
                 else: validated_prefs[key] = current_prefs.get(key, default_value)
@@ -253,10 +259,11 @@ def post_preferences():
             if save_preferences(validated_prefs): return jsonify({"status": "warning", "message": "Preferences saved with errors.", "errors": validation_errors, "saved_prefs": validated_prefs}), 200
             else: return jsonify({"status": "error", "message": "Failed to save preferences with errors"}), 500
         if save_preferences(validated_prefs):
-            # Auto-download GeoIP DB if license key provided and DB not yet present
+            # Auto-download GeoIP DB if credentials provided and DB not yet present
+            account_id = validated_prefs.get('maxmindAccountId', '')
             license_key = validated_prefs.get('maxmindLicenseKey', '')
-            if license_key and not stats_aggregator.is_geoip_available():
-                geoip_ok, geoip_msg = _try_geoip_download_and_configure(license_key)
+            if account_id and license_key and not stats_aggregator.is_geoip_available():
+                geoip_ok, geoip_msg = _try_geoip_download_and_configure(account_id, license_key)
                 if geoip_ok:
                     return jsonify({"status": "success", "message": f"Preferences saved. {geoip_msg}", "saved_prefs": validated_prefs})
                 else:
@@ -269,8 +276,9 @@ def post_preferences():
         return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 
-def _try_geoip_download_and_configure(license_key):
+def _try_geoip_download_and_configure(account_id, license_key):
     """Attempt to download the GeoLite2-Country.mmdb and configure GeoIP.
+    MaxMind API requires HTTP Basic Auth: AccountID as user, LicenseKey as password.
     Returns (success: bool, message: str)."""
     geoip_path = Path(os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb')))
 
@@ -279,15 +287,20 @@ def _try_geoip_download_and_configure(license_key):
         stats_aggregator.configure_geoip(str(geoip_path))
         return True, f"GeoIP database already present at {geoip_path}"
 
-    if not license_key:
-        return False, "No MaxMind license key provided."
+    if not account_id or not license_key:
+        return False, "MaxMind Account ID and License Key are both required."
 
     try:
-        import tempfile, tarfile, urllib.request, shutil
-        url = f"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key={license_key}&suffix=tar.gz"
+        import tempfile, tarfile, urllib.request, base64, shutil
+        url = "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&suffix=tar.gz"
+        credentials = base64.b64encode(f"{account_id}:{license_key}".encode()).decode()
+        req = urllib.request.Request(url, headers={"Authorization": f"Basic {credentials}"})
+        print(f"GeoIP: downloading from MaxMind (AccountID {account_id})...")
+
         tmp_tar = Path(tempfile.mktemp(suffix='.tar.gz'))
-        print(f"GeoIP: downloading from MaxMind...")
-        urllib.request.urlretrieve(url, str(tmp_tar))
+        with urllib.request.urlopen(req) as resp:
+            with open(str(tmp_tar), 'wb') as f:
+                shutil.copyfileobj(resp, f)
 
         with tarfile.open(str(tmp_tar), 'r:gz') as tar:
             for member in tar.getmembers():
@@ -302,22 +315,28 @@ def _try_geoip_download_and_configure(license_key):
             stats_aggregator.configure_geoip(str(geoip_path))
             return True, f"GeoIP database downloaded successfully ({geoip_path.stat().st_size / 1024 / 1024:.1f} MB)"
         else:
-            return False, "Download succeeded but mmdb file not found in archive. Check your license key."
+            return False, "Download succeeded but mmdb file not found in archive. Check your credentials."
+    except urllib.error.HTTPError as e:
+        return False, f"MaxMind API returned HTTP {e.code}. Check Account ID and License Key."
     except Exception as e:
-        tmp_tar.unlink(missing_ok=True) if 'tmp_tar' in dir() else None
+        try:
+            tmp_tar.unlink(missing_ok=True)
+        except Exception:
+            pass
         return False, f"GeoIP download failed: {e}"
 
 
 @app.route('/api/geoip/download', methods=['POST'])
 @login_required
 def api_geoip_download():
-    """Trigger GeoIP database download using the stored MaxMind license key."""
+    """Trigger GeoIP database download using the stored MaxMind credentials."""
     prefs = load_preferences()
+    account_id = prefs.get('maxmindAccountId', '')
     license_key = prefs.get('maxmindLicenseKey', '')
-    if not license_key:
-        return jsonify({"status": "error", "message": "MaxMind license key not set. Enter it in Preferences first."}), 400
+    if not account_id or not license_key:
+        return jsonify({"status": "error", "message": "MaxMind Account ID and License Key are both required. Enter them in Preferences first."}), 400
 
-    success, message = _try_geoip_download_and_configure(license_key)
+    success, message = _try_geoip_download_and_configure(account_id, license_key)
     if success:
         return jsonify({"status": "success", "message": message, "geoip_available": stats_aggregator.is_geoip_available()})
     else:

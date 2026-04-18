@@ -43,10 +43,12 @@ services:
       # List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
       - TZ=Etc/UTC
       
-      # Optional: MaxMind license key for GeoIP (country statistics on the Stats page).
-      # Get a free key at https://www.maxmind.com/en/geolite2/signup
+      # Optional: MaxMind credentials for GeoIP (country statistics on the Stats page).
+      # Get a free account at https://www.maxmind.com/en/geolite2/signup
       # The GeoLite2-Country.mmdb database will be auto-downloaded on first start.
-      # - MAXMIND_LICENSE_KEY=your-license-key-here
+      # You can also enter these in the Preferences page of the UI instead.
+      # - MAXMIND_ACCOUNT_ID=your-account-id
+      # - MAXMIND_LICENSE_KEY=your-license-key
 
     volumes:
       # Volume for Caddy's configuration (Caddyfile).

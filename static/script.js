@@ -64,6 +64,7 @@ const defaultAuthentikOutpostUrlInput = document.getElementById('default-authent
 const defaultAuthentikUriInput = document.getElementById('default-authentik-uri');
 const defaultAuthentikCopyHeadersInput = document.getElementById('default-authentik-copy-headers');
 const defaultAuthentikTrustedProxiesInput = document.getElementById('default-authentik-trusted-proxies');
+const maxmindAccountIdInput = document.getElementById('maxmind-account-id');
 const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
 const downloadGeoipBtn = document.getElementById('download-geoip-btn');
 const geoipStatusText = document.getElementById('geoip-status-text');
@@ -118,8 +119,9 @@ if (savePrefsBtn) {
     // GeoIP download button
     if (downloadGeoipBtn) {
         downloadGeoipBtn.addEventListener('click', async () => {
-            if (!maxmindLicenseKeyInput || !maxmindLicenseKeyInput.value.trim()) {
-                showToast('Enter a MaxMind license key first.', 'warning');
+            if (!maxmindAccountIdInput || !maxmindAccountIdInput.value.trim() ||
+                !maxmindLicenseKeyInput || !maxmindLicenseKeyInput.value.trim()) {
+                showToast('Enter both Account ID and License Key first.', 'warning');
                 return;
             }
             downloadGeoipBtn.disabled = true;
@@ -144,12 +146,13 @@ if (savePrefsBtn) {
             }
         });
     }
-    // Enable download button when license key is entered
-    if (maxmindLicenseKeyInput) {
-        maxmindLicenseKeyInput.addEventListener('input', () => {
-            if (downloadGeoipBtn) downloadGeoipBtn.disabled = !maxmindLicenseKeyInput.value.trim();
-        });
-    }
+    // Enable download button when both credentials are entered
+    const checkGeoipCreds = () => {
+        const hasBoth = maxmindAccountIdInput?.value.trim() && maxmindLicenseKeyInput?.value.trim();
+        if (downloadGeoipBtn) downloadGeoipBtn.disabled = !hasBoth;
+    };
+    if (maxmindAccountIdInput) maxmindAccountIdInput.addEventListener('input', checkGeoipCreds);
+    if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.addEventListener('input', checkGeoipCreds);
 }
 if (addHostBtn) {
     addHostBtn.addEventListener('click', () => openSiteModal());
@@ -686,6 +689,7 @@ async function savePreferences() {
     const prefsToSave = { 
         theme: themeSelect.value, 
         globalAdminEmail: globalAdminEmailInput.value.trim(), 
+        maxmindAccountId: maxmindAccountIdInput ? maxmindAccountIdInput.value.trim() : '',
         maxmindLicenseKey: maxmindLicenseKeyInput ? maxmindLicenseKeyInput.value.trim() : '',
         defaultSkipTlsVerify: defaultSkipTlsVerifyInput.checked, 
         defaultAuthentikEnabled: defaultAuthentikEnabledInput.checked, 
@@ -745,9 +749,11 @@ async function loadPreferences() {
         if (defaultAuthentikCopyHeadersInput) defaultAuthentikCopyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || "";
         if (defaultAuthentikTrustedProxiesInput) defaultAuthentikTrustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || "";
         if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.value = currentPreferences.maxmindLicenseKey || "";
+        if (maxmindAccountIdInput) maxmindAccountIdInput.value = currentPreferences.maxmindAccountId || "";
 
-        // Enable/disable GeoIP download button based on key presence
-        if (downloadGeoipBtn) downloadGeoipBtn.disabled = !maxmindLicenseKeyInput.value.trim();
+        // Enable/disable GeoIP download button based on credentials presence
+        const hasBoth = maxmindAccountIdInput?.value.trim() && maxmindLicenseKeyInput?.value.trim();
+        if (downloadGeoipBtn) downloadGeoipBtn.disabled = !hasBoth;
 
         // Check GeoIP status
         try {
