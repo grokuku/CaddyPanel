@@ -156,6 +156,36 @@ if (savePrefsBtn) {
     if (maxmindAccountIdInput) maxmindAccountIdInput.addEventListener('input', checkGeoipCreds);
     if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.addEventListener('input', checkGeoipCreds);
 
+    // GeoIP file upload handler
+    const geoipFileUpload = document.getElementById('geoip-file-upload');
+    if (geoipFileUpload) {
+        geoipFileUpload.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!file.name.endsWith('.mmdb')) {
+                showToast('Please select a .mmdb file.', 'warning'); return;
+            }
+            if (geoipStatusText) geoipStatusText.textContent = 'Uploading...';
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                const res = await fetch('/api/geoip/upload', { method: 'POST', body: formData });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    showToast(result.message, 'success');
+                    if (geoipStatusText) geoipStatusText.textContent = '✓ GeoIP active';
+                } else {
+                    showToast(result.message, 'error', 8000);
+                    if (geoipStatusText) geoipStatusText.textContent = '✗ Upload failed';
+                }
+            } catch (err) {
+                showToast('Upload failed: ' + err.message, 'error');
+                if (geoipStatusText) geoipStatusText.textContent = '✗ Upload failed';
+            }
+            geoipFileUpload.value = '';
+        });
+    }
+
     // Test connection button
     if (testGeoipBtn) {
         testGeoipBtn.addEventListener('click', async () => {

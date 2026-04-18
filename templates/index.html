@@ -112,7 +112,16 @@
                     <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">Enable country-level statistics by providing MaxMind credentials. <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">Create a free account &rarr;</a></p>
                     <div class="form-group"> <label for="maxmind-account-id">MaxMind Account ID:</label> <input type="text" id="maxmind-account-id" name="maxmindAccountId" placeholder="e.g. 200922"> </div>
                     <div class="form-group"> <label for="maxmind-license-key">MaxMind License Key:</label> <input type="password" id="maxmind-license-key" name="maxmindLicenseKey" placeholder="Enter your license key..."> </div>
-                    <div class="form-group" style="display:flex;align-items:center;gap:8px;"> <button type="button" id="test-geoip-btn" style="padding:6px 14px;border:1px solid #ccc;border-radius:4px;background:var(--bg-input);color:var(--text-primary);cursor:pointer;font-size:0.85em;" disabled>Test Connection</button> <button type="button" id="download-geoip-btn" style="padding:6px 14px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:var(--accent-contrast);cursor:pointer;font-size:0.85em;" disabled>Download GeoIP Database</button> <span id="geoip-status-text" style="font-size:0.8em;color:var(--text-secondary);">Checking...</span> </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+                        <button type="button" id="test-geoip-btn" style="padding:6px 14px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg-input);color:var(--text-primary);cursor:pointer;font-size:0.85em;" disabled>Test</button>
+                        <button type="button" id="download-geoip-btn" style="padding:6px 14px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:var(--accent-contrast);cursor:pointer;font-size:0.85em;" disabled>Download</button>
+                        <span id="geoip-status-text" style="font-size:0.8em;color:var(--text-secondary);">Checking...</span>
+                    </div>
+                    <div class="form-group" style="margin-top:8px;">
+                        <label>Or upload manually:</label>
+                        <input type="file" id="geoip-file-upload" accept=".mmdb" style="font-size:0.85em;">
+                        <small style="display:block;margin-top:4px;color:var(--text-secondary);">Download from <a href="https://www.maxmind.com/en/accounts/200922/geoip/downloads" target="_blank" rel="noopener">MaxMind portal</a> or run <code>geoipupdate</code> on your host, then upload the <code>GeoLite2-Country.mmdb</code> file here.</small>
+                    </div>
                 <hr>
                     <button type="button" id="save-prefs-btn">Save Preferences</button>
                 </form>

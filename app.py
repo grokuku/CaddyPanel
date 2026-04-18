@@ -430,6 +430,33 @@ def api_geoip_status():
     """Check if GeoIP is currently available."""
     return jsonify({"geoip_available": stats_aggregator.is_geoip_available()})
 
+
+@app.route('/api/geoip/upload', methods=['POST'])
+@login_required
+def api_geoip_upload():
+    """Upload a GeoLite2-Country.mmdb file manually."""
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "No file provided."}), 400
+    f = request.files['file']
+    if not f.filename.endswith('.mmdb'):
+        return jsonify({"status": "error", "message": "File must be a .mmdb file."}), 400
+
+    geoip_path = Path(os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb')))
+    try:
+        geoip_path.parent.mkdir(parents=True, exist_ok=True)
+        f.save(str(geoip_path))
+        # Verify the file is valid by trying to configure it
+        stats_aggregator.configure_geoip(str(geoip_path))
+        if stats_aggregator.is_geoip_available():
+            size_mb = geoip_path.stat().st_size / 1024 / 1024
+            return jsonify({"status": "success", "message": f"GeoIP database uploaded and activated ({size_mb:.1f} MB).", "geoip_available": True})
+        else:
+            # File was saved but couldn't be loaded as GeoIP
+            geoip_path.unlink(missing_ok=True)
+            return jsonify({"status": "error", "message": "File saved but failed to load as GeoIP database. Make sure it's a valid GeoLite2-Country.mmdb."}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Upload failed: {e}"}), 500
+
 @app.route('/api/browse', methods=['GET'])
 @login_required
 def browse_files():
