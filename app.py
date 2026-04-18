@@ -621,8 +621,8 @@ def sites_health_check():
         return jsonify({"status": "error", "message": "Missing targets"}), 400
 
     targets = data['targets']
-    if not isinstance(targets, dict) or len(targets) > 50:
-        return jsonify({"status": "error", "message": "Invalid targets (max 50)"}), 400
+    if not isinstance(targets, dict) or len(targets) > 100:
+        return jsonify({"status": "error", "message": "Invalid targets (max 200 per batch)"}), 400
 
     def check_one(site_addr, target_url):
         """Check if a backend is reachable. Returns (site_addr, status)."""
@@ -656,10 +656,10 @@ def sites_health_check():
 
     statuses = {}
     try:
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(check_one, addr, url): addr for addr, url in targets.items()}
             try:
-                for future in as_completed(futures, timeout=15):
+                for future in as_completed(futures, timeout=30):
                     try:
                         addr, status = future.result()
                         statuses[addr] = status

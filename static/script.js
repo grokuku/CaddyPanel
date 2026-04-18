@@ -1195,13 +1195,40 @@ async function handleImportCaddyfile(event) {
 // --- Site Health Check ---
 let healthCheckInterval = null;
 let healthCheckInProgress = false;
+const HEALTH_BATCH_SIZE = 25;
+
+function chunkObject(obj, size) {
+    const keys = Object.keys(obj);
+    const chunks = [];
+    for (let i = 0; i < keys.length; i += size) {
+        const chunk = {};
+        keys.slice(i, i + size).forEach(k => chunk[k] = obj[k]);
+        chunks.push(chunk);
+    }
+    return chunks;
+}
+
+function applyStatuses(statuses) {
+    document.querySelectorAll('.site-status-dot').forEach(dot => {
+        const addr = dot.dataset.siteAddress;
+        if (!addr) return;
+        const status = statuses[addr];
+        if (status === 'up') {
+            dot.className = 'site-status-dot up';
+            dot.title = 'Online';
+        } else if (status === 'down') {
+            dot.className = 'site-status-dot down';
+            dot.title = 'Offline';
+        } else if (status) {
+            dot.className = 'site-status-dot unknown';
+            dot.title = status;
+        }
+    });
+}
 
 async function checkSitesHealth() {
     if (healthCheckInProgress) return;
-    if (siteConfigs.length === 0) {
-        console.log('[HealthCheck] No site configs yet, skipping.');
-        return;
-    }
+    if (siteConfigs.length === 0) return;
     healthCheckInProgress = true;
 
     // Collect targets: address -> reverse_proxy URL
@@ -1209,7 +1236,7 @@ async function checkSitesHealth() {
     for (const site of siteConfigs) {
         if (site.address && site.reverse_proxy && !site.is_custom) {
             let target = site.reverse_proxy.trim();
-            if (target.startsWith('@')) continue; // named matchers can't be health-checked
+            if (target.startsWith('@')) continue;
             if (!target.startsWith('http://') && !target.startsWith('https://')) {
                 target = 'http://' + target;
             }
@@ -1218,10 +1245,9 @@ async function checkSitesHealth() {
     }
 
     const targetCount = Object.keys(targets).length;
-    console.log(`[HealthCheck] Checking ${targetCount} target(s):`, targets);
+    console.log(`[HealthCheck] Checking ${targetCount} target(s) in batches of ${HEALTH_BATCH_SIZE}`);
 
     if (targetCount === 0) {
-        // No checkable sites — set all dots to unknown
         document.querySelectorAll('.site-status-dot').forEach(dot => {
             dot.className = 'site-status-dot unknown';
             dot.title = 'No backend to check';
@@ -1230,7 +1256,7 @@ async function checkSitesHealth() {
         return;
     }
 
-    // Set dots for targeted sites to "checking"
+    // Set all targeted dots to "checking"
     document.querySelectorAll('.site-status-dot').forEach(dot => {
         if (dot.dataset.siteAddress in targets) {
             dot.className = 'site-status-dot checking';
@@ -1238,65 +1264,59 @@ async function checkSitesHealth() {
         }
     });
 
-    try {
-        const response = await fetch('/api/sites/health-check', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ targets: targets })
-        });
+    // Split into batches and process sequentially
+    const batches = chunkObject(targets, HEALTH_BATCH_SIZE);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`[HealthCheck] API error ${response.status}:`, errorText);
-            document.querySelectorAll('.site-status-dot').forEach(dot => {
-                dot.className = 'site-status-dot unknown';
-                dot.title = 'Health check failed';
+    for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        try {
+            const response = await fetch('/api/sites/health-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ targets: batch })
             });
-            healthCheckInProgress = false;
-            return;
-        }
 
-        const data = await response.json();
-        const statuses = data.statuses || {};
-        console.log('[HealthCheck] Results:', statuses);
-
-        document.querySelectorAll('.site-status-dot').forEach(dot => {
-            const addr = dot.dataset.siteAddress;
-            if (!addr) return;
-            const status = statuses[addr];
-            if (status === 'up') {
-                dot.className = 'site-status-dot up';
-                dot.title = 'Online';
-            } else if (status === 'down') {
-                dot.className = 'site-status-dot down';
-                dot.title = 'Offline';
-            } else {
-                dot.className = 'site-status-dot unknown';
-                dot.title = status || 'Unknown';
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} API error ${response.status}:`, errorText);
+                // Mark this batch's sites as unknown
+                Object.keys(batch).forEach(addr => {
+                    document.querySelectorAll(`.site-status-dot[data-site-address="${addr}"]`).forEach(dot => {
+                        dot.className = 'site-status-dot unknown';
+                        dot.title = 'Check failed';
+                    });
+                });
+                continue;
             }
-        });
-    } catch (err) {
-        console.error('[HealthCheck] Fetch error:', err);
-        document.querySelectorAll('.site-status-dot').forEach(dot => {
-            dot.className = 'site-status-dot unknown';
-            dot.title = 'Health check error';
-        });
+
+            const data = await response.json();
+            const statuses = data.statuses || {};
+            applyStatuses(statuses);
+        } catch (err) {
+            console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} fetch error:`, err);
+            Object.keys(batch).forEach(addr => {
+                document.querySelectorAll(`.site-status-dot[data-site-address="${addr}"]`).forEach(dot => {
+                    dot.className = 'site-status-dot unknown';
+                    dot.title = 'Check error';
+                });
+            });
+        }
     }
+
     healthCheckInProgress = false;
 }
 
 function startHealthCheckLoop() {
     if (healthCheckInterval) clearInterval(healthCheckInterval);
     checkSitesHealth();
-    healthCheckInterval = setInterval(checkSitesHealth, 30000); // refresh every 30s
+    healthCheckInterval = setInterval(checkSitesHealth, 30000);
 }
 
 // Start health check when table is rendered
 const origRenderSitesTable = renderSitesTable;
 renderSitesTable = function() {
     origRenderSitesTable();
-    // Delay health check slightly so DOM is ready
     setTimeout(checkSitesHealth, 500);
 };
 
