@@ -52,7 +52,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - On preference save: if geoBlockMode or geoBlockCountries changed, calls `_apply_geoblocking_to_caddyfile()`.
   - `_apply_geoblocking_to_caddyfile(enabled)`: reads Caddyfile, calls `_configure_caddyfile_geoblocking()`, writes back, reloads Caddy.
   - `_configure_caddyfile_geoblocking(content, enabled, flask_port)`: injects/removes `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` in each site block (marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments). Skips the global block.
-  - `POST /api/sites/health-check`: accepts `{"targets": {"addr": "http://host:port"}}`. Checks each backend with HEAD request (4s timeout, SSL verification skipped for HTTPS). Uses ThreadPoolExecutor (8 workers). Returns `{"statuses": {"addr": "up"|"down"|"unknown"}}`. 4xx/5xx responses count as "up" (server responds).
+  - `POST /api/sites/health-check`: accepts `{"targets": {"addr": "http://host:port"}}` (max 200 per batch). Checks each backend with GET request (3s timeout, SSL verification skipped for HTTPS). Uses ThreadPoolExecutor (10 workers, 30s overall timeout). Returns `{"statuses": {"addr": "up"|"down"}}`. 4xx/5xx responses count as "up" (server responds). Dots that time out default to "down". Proper TimeoutError handling for as_completed.
   - `_find_matching_brace()`, `_remove_directive_block()`, `_add_log_to_site_blocks()`, `_configure_caddyfile_logging_internal()`: Caddyfile parsing helpers.
 
 - stats_aggregator.py: Incremental log processor + stats query engine.
@@ -93,7 +93,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - Stats API: `/api/stats?period=7d&host=` returns `top_countries` + `geoip_available`.
 
 - static/script.js: Caddyfile parsing uses `findMatchingBrace()`. Stats button opens `/stats?host=X`.
-  - **Site health check**: colored dot (🟢up/🔴down/⚪unknown) next to each site name. Auto-refreshes every 30s. Uses `POST /api/sites/health-check` endpoint.
+  - **Site health check**: colored dot (🟢up/🔴down/⚪unknown) next to each site name. Auto-refreshes every 30s. Uses `POST /api/sites/health-check` endpoint. Batching: targets split into batches of 25, sent sequentially to avoid API limits. Dots update progressively as each batch completes. `healthCheckInProgress` guard prevents concurrent runs.
   - Geo-blocking UI: COUNTRY_DATA object (ISO 3166-1 alpha-2 → name), `countryFlag()` for emoji flags, `renderGeoBlockUI()` for show/hide and list rendering, `renderGeoSelectedTags()` for chip display.
   - `geoSelectedCountries` array: maintained in JS, saved/loaded as `geoBlockCountries` preference.
 
@@ -181,7 +181,7 @@ COMPLETED_FEATURES:
 - Statistics dashboard: full-viewport CSS Grid layout, no-scroll. CSS variable theming. Clickable host names.
 - GeoIP country tracking: top 5 countries + world heatmap (D3+TopoJSON). Upload or download GeoLite2-Country.mmdb.
 - **Geo-blocking**: forward_auth-based IP country blocking/allowing. UI with mode select, country search, flag emoji tags. Automatic Caddyfile injection/removal of directives on preference save. LRU+TTL cache for forward-auth performance.
-- **Site health indicators**: colored dot (green=up, red=down, gray=unknown, pulsing gray=checking) next to each site name in the table. Checks backend reachability via `/api/sites/health-check` endpoint. Auto-refreshes every 30s. CSS-animated pulse during check.
+- **Site health indicators**: colored dot (green=up, red=down, gray=unknown) next to each site name in the table. Checks backend reachability via `/api/sites/health-check` endpoint (batched, 25 per request). Auto-refreshes every 30s. During re-check, dots pulse with their last known color (green pulse, red pulse, or gray pulse if no previous state) — never reset to gray. CSS transition on background-color. `data-last-status` attribute tracks last known state on each dot element.
 - Caddy log configuration wizard.
 - Multi-architecture Docker build (amd64 + arm64).
 - Automatic JSON logging configuration for all sites.

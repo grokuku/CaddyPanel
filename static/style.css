@@ -200,11 +200,17 @@ button:hover, .action-btn:hover { background-color: var(--accent-hover); }
     margin-right: 6px;
     vertical-align: middle;
     flex-shrink: 0;
+    transition: background-color 0.3s ease;
 }
+/* Stable states */
 .site-status-dot.up { background-color: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,0.5); }
 .site-status-dot.down { background-color: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,0.5); }
-.site-status-dot.checking { background-color: #9ca3af; animation: status-pulse 1.2s ease-in-out infinite; }
 .site-status-dot.unknown { background-color: #6b7280; }
+/* Checking states — animation + color from last known status */
+.site-status-dot.checking { animation: status-pulse 1.2s ease-in-out infinite; box-shadow: none; }
+.site-status-dot.checking.up { background-color: #22c55e; }
+.site-status-dot.checking.down { background-color: #ef4444; }
+.site-status-dot.checking:not(.up):not(.down) { background-color: #9ca3af; }
 @keyframes status-pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }

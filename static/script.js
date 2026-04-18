@@ -1215,12 +1215,15 @@ function applyStatuses(statuses) {
         const status = statuses[addr];
         if (status === 'up') {
             dot.className = 'site-status-dot up';
+            dot.dataset.lastStatus = 'up';
             dot.title = 'Online';
         } else if (status === 'down') {
             dot.className = 'site-status-dot down';
+            dot.dataset.lastStatus = 'down';
             dot.title = 'Offline';
         } else if (status) {
             dot.className = 'site-status-dot unknown';
+            dot.dataset.lastStatus = '';
             dot.title = status;
         }
     });
@@ -1248,18 +1251,28 @@ async function checkSitesHealth() {
     console.log(`[HealthCheck] Checking ${targetCount} target(s) in batches of ${HEALTH_BATCH_SIZE}`);
 
     if (targetCount === 0) {
+        // No checkable sites — set dots without a backend to unknown
         document.querySelectorAll('.site-status-dot').forEach(dot => {
-            dot.className = 'site-status-dot unknown';
-            dot.title = 'No backend to check';
+            if (!dot.dataset.lastStatus) {
+                dot.className = 'site-status-dot unknown';
+                dot.title = 'No backend to check';
+            }
         });
         healthCheckInProgress = false;
         return;
     }
 
-    // Set all targeted dots to "checking"
+    // Set targeted dots to "checking" — keep last known color
     document.querySelectorAll('.site-status-dot').forEach(dot => {
         if (dot.dataset.siteAddress in targets) {
-            dot.className = 'site-status-dot checking';
+            const last = dot.dataset.lastStatus;
+            if (last === 'up') {
+                dot.className = 'site-status-dot checking up';
+            } else if (last === 'down') {
+                dot.className = 'site-status-dot checking down';
+            } else {
+                dot.className = 'site-status-dot checking';
+            }
             dot.title = 'Checking...';
         }
     });
@@ -1280,13 +1293,7 @@ async function checkSitesHealth() {
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} API error ${response.status}:`, errorText);
-                // Mark this batch's sites as unknown
-                Object.keys(batch).forEach(addr => {
-                    document.querySelectorAll(`.site-status-dot[data-site-address="${addr}"]`).forEach(dot => {
-                        dot.className = 'site-status-dot unknown';
-                        dot.title = 'Check failed';
-                    });
-                });
+                // Keep dots in checking state with last color — don't reset to gray
                 continue;
             }
 
@@ -1295,12 +1302,7 @@ async function checkSitesHealth() {
             applyStatuses(statuses);
         } catch (err) {
             console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} fetch error:`, err);
-            Object.keys(batch).forEach(addr => {
-                document.querySelectorAll(`.site-status-dot[data-site-address="${addr}"]`).forEach(dot => {
-                    dot.className = 'site-status-dot unknown';
-                    dot.title = 'Check error';
-                });
-            });
+            // Keep dots in checking state with last color — don't reset to gray
         }
     }
 
