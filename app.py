@@ -10,6 +10,10 @@ import time
 from pathlib import Path
 from functools import wraps
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib.request
+import urllib.error
+import socket
 from flask import (Flask, render_template, url_for, request, jsonify, abort,
                    session, redirect, flash, Response)
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -604,6 +608,63 @@ def reload_caddy_config():
     except FileNotFoundError: return jsonify({"status": "error", "message": "Caddy command not found."}), 500
     except subprocess.TimeoutExpired: return jsonify({"status": "error", "message": "Reload command timed out."}), 500
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
+
+
+@app.route('/api/sites/health-check', methods=['POST'])
+@login_required
+def sites_health_check():
+    """Check health of site backends. Expects JSON: {"targets": {"site_addr": "http://host:port", ...}}
+    Returns: {"statuses": {"site_addr": "up"|"down"|"unknown", ...}}
+    """
+    data = request.get_json(silent=True)
+    if not data or 'targets' not in data:
+        return jsonify({"status": "error", "message": "Missing targets"}), 400
+
+    targets = data['targets']
+    if not isinstance(targets, dict) or len(targets) > 50:
+        return jsonify({"status": "error", "message": "Invalid targets (max 50)"}), 400
+
+    def check_one(site_addr, target_url):
+        """Check if a backend is reachable. Returns (site_addr, status)."""
+        if not target_url:
+            return (site_addr, 'unknown')
+        url = target_url.strip()
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+        try:
+            req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'CaddyPanel-HealthCheck/1.0'})
+            ctx = None
+            if url.startswith('https://'):
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=4, context=ctx) as resp:
+                return (site_addr, 'up')
+        except urllib.error.HTTPError:
+            # Server responded (even with 4xx/5xx) = it's up
+            return (site_addr, 'up')
+        except (urllib.error.URLError, socket.timeout, OSError, ConnectionRefusedError):
+            return (site_addr, 'down')
+        except Exception:
+            return (site_addr, 'down')
+
+    statuses = {}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(check_one, addr, url): addr for addr, url in targets.items()}
+        for future in as_completed(futures, timeout=10):
+            try:
+                addr, status = future.result()
+                statuses[addr] = status
+            except Exception:
+                statuses[futures[future]] = 'error'
+
+    for addr in targets:
+        if addr not in statuses:
+            statuses[addr] = 'unknown'
+
+    return jsonify({"statuses": statuses})
+
 
 # --- Real Log Data Processing for Stats Page ---
 # --- Stats Routes (backed by stats_aggregator) ---

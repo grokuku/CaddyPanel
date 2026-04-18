@@ -404,7 +404,7 @@ function renderSitesTable() {
     if (!sitesTableBody) return;
     sitesTableBody.innerHTML = '';
     if (siteConfigs.length === 0) {
-        sitesTableBody.innerHTML = '<tr><td colspan="7">No sites configured. Click "Add Proxy Host".</td></tr>';
+        sitesTableBody.innerHTML = '<tr><td colspan="6">No sites configured. Click "Add Proxy Host".</td></tr>';
         return;
     }
     sortSiteConfigs();
@@ -413,10 +413,11 @@ function renderSitesTable() {
         row.dataset.index = index;
 
         const cellHost = row.insertCell();
+        cellHost.style.display = 'flex';
+        cellHost.style.alignItems = 'center';
         const cellForward = row.insertCell();
         const cellSSL = row.insertCell();
         const cellSkipTls = row.insertCell();
-        const cellWebsocket = row.insertCell();
         const cellAuthentik = row.insertCell();
         const cellActions = row.insertCell();
 
@@ -437,6 +438,11 @@ function renderSitesTable() {
             siteLink.href = '#';
         }
         siteLink.target = '_blank';
+        const statusDot = document.createElement('span');
+        statusDot.className = 'site-status-dot checking';
+        statusDot.title = 'Checking...';
+        statusDot.dataset.siteAddress = site.address || '';
+        cellHost.appendChild(statusDot);
         cellHost.appendChild(siteLink);
 
         if (site.is_custom) {
@@ -469,16 +475,6 @@ function renderSitesTable() {
         skipTlsCheckbox.title = 'Toggle Skip TLS Verify for reverse_proxy target';
         cellSkipTls.appendChild(skipTlsCheckbox);
         cellSkipTls.style.textAlign = 'center';
-
-        const websocketCheckbox = document.createElement('input');
-        websocketCheckbox.type = 'checkbox';
-        websocketCheckbox.checked = !site.is_custom && (site.websocket || false);
-        websocketCheckbox.disabled = site.is_custom;
-        websocketCheckbox.dataset.index = index;
-        websocketCheckbox.dataset.action = 'toggle-websocket';
-        websocketCheckbox.title = 'Toggle WebSocket/Streaming mode (flush_interval -1)';
-        cellWebsocket.appendChild(websocketCheckbox);
-        cellWebsocket.style.textAlign = 'center';
 
         const authentikCheckbox = document.createElement('input');
         authentikCheckbox.type = 'checkbox';
@@ -549,9 +545,6 @@ async function handleTableCheckboxChange(event) {
     if (action === 'toggle-skip-tls') {
         siteConfigs[index].tls_skip_verify = target.checked;
         siteChanged = true;
-    } else if (action === 'toggle-websocket') {
-        siteConfigs[index].websocket = target.checked;
-        siteChanged = true;
     } else if (action === 'toggle-authentik') {
         if (target.checked) {
             if (!siteConfigs[index].forward_auth) {
@@ -616,7 +609,6 @@ function openSiteModal(index = -1) {
             siteData.forward_auth = null;
         }
         siteData.tls = 'auto';
-        siteData.websocket = false;
         siteData.is_custom = false; // New sites are standard by default
     }
 
@@ -637,8 +629,7 @@ function closeSiteModal() { if (siteModal) siteModal.style.display = 'none'; }
 function populateModal(data) {
     document.getElementById('modal-server-address').value = data.address || ''; 
     document.getElementById('modal-reverse-proxy').value = data.reverse_proxy || ''; 
-    document.getElementById('modal-tls-skip-verify').checked = data.tls_skip_verify || false;
-    document.getElementById('modal-websocket').checked = data.websocket || false; 
+    document.getElementById('modal-tls-skip-verify').checked = data.tls_skip_verify || false; 
     document.getElementById('modal-root-dir').value = data.root || ''; 
     document.getElementById('modal-file-server').checked = data.file_server || false; 
     document.getElementById('modal-tls-mode').value = data.tls || 'auto'; 
@@ -668,8 +659,7 @@ function populateModal(data) {
 function collectStandardModalData() {
     const siteData = {
         reverse_proxy: document.getElementById('modal-reverse-proxy').value.trim(),
-        tls_skip_verify: document.getElementById('modal-tls-skip-verify').checked,
-        websocket: document.getElementById('modal-websocket').checked,
+        tls_skip_verify: document.getElementById('modal-tls-skip-verify').checked, 
         root: document.getElementById('modal-root-dir').value.trim(),
         file_server: document.getElementById('modal-file-server').checked, 
         tls: document.getElementById('modal-tls-mode').value,
@@ -768,20 +758,8 @@ function generateCaddyfileBlock(site) {
     if (site.reverse_proxy) { 
         const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
         blockContent += `\treverse_proxy ${p}`;
-        const needsTransportBlock = site.tls_skip_verify && p.startsWith('https://');
-        const needsFlushInterval = site.websocket;
-        
-        if (needsTransportBlock || needsFlushInterval) {
-            blockContent += ` {\n`;
-            if (needsFlushInterval) {
-                blockContent += `\t\tflush_interval -1\n`;
-            }
-            if (needsTransportBlock) {
-                blockContent += `\t\ttransport http {\n`;
-                blockContent += `\t\t\ttls_insecure_skip_verify\n`;
-                blockContent += `\t\t}\n`;
-            }
-            blockContent += `\t}\n`;
+        if (site.tls_skip_verify && p.startsWith('https://')) { 
+            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
         } else { 
             blockContent += `\n`; 
         } 
@@ -1082,7 +1060,6 @@ function parseCaddyfile(content) {
         // Standard parsing logic
         siteData.tls = 'auto';
         siteData.tls_skip_verify = false;
-        siteData.websocket = false;
         siteData.forward_auth = null;
 
         const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
@@ -1093,7 +1070,7 @@ function parseCaddyfile(content) {
         const rpLineMatch = siteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
         if (rpLineMatch && !rpLineMatch[1].includes('/outpost.goauthentik.io/')) {
             siteData.reverse_proxy = rpLineMatch[1].trim();
-            // Check for flush_interval or transport block with tls_insecure_skip_verify
+            // Check for transport block with tls_insecure_skip_verify
             const rpIndex = siteContent.indexOf('reverse_proxy');
             const rpBracePos = siteContent.indexOf('{', rpIndex);
             if (rpBracePos !== -1) {
@@ -1105,9 +1082,6 @@ function parseCaddyfile(content) {
                         const rpBlockContent = siteContent.substring(rpBracePos + 1, rpClosePos);
                         if (rpBlockContent.includes('tls_insecure_skip_verify')) {
                             siteData.tls_skip_verify = true;
-                        }
-                        if (rpBlockContent.includes('flush_interval')) {
-                            siteData.websocket = true;
                         }
                     }
                 }
@@ -1217,3 +1191,99 @@ async function handleImportCaddyfile(event) {
     };
     reader.readAsText(file);
 }
+
+// --- Site Health Check ---
+let healthCheckInterval = null;
+
+async function checkSitesHealth() {
+    if (siteConfigs.length === 0) return;
+
+    // Collect targets: address -> reverse_proxy URL
+    const targets = {};
+    for (const site of siteConfigs) {
+        if (site.address && site.reverse_proxy && !site.is_custom) {
+            let target = site.reverse_proxy.trim();
+            if (target.startsWith('@')) continue; // named matchers can't be health-checked
+            if (!target.startsWith('http://') && !target.startsWith('https://')) {
+                target = 'http://' + target;
+            }
+            targets[site.address] = target;
+        }
+    }
+
+    if (Object.keys(targets).length === 0) {
+        // No checkable sites — set all dots to unknown
+        document.querySelectorAll('.site-status-dot').forEach(dot => {
+            dot.className = 'site-status-dot unknown';
+            dot.title = 'No backend to check';
+        });
+        return;
+    }
+
+    // Set all dots to "checking"
+    document.querySelectorAll('.site-status-dot').forEach(dot => {
+        if (dot.dataset.siteAddress in targets) {
+            dot.className = 'site-status-dot checking';
+            dot.title = 'Checking...';
+        }
+    });
+
+    try {
+        const response = await fetch('/api/sites/health-check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targets: targets })
+        });
+        if (!response.ok) {
+            // Error — set all to unknown
+            document.querySelectorAll('.site-status-dot').forEach(dot => {
+                dot.className = 'site-status-dot unknown';
+                dot.title = 'Health check failed';
+            });
+            return;
+        }
+        const data = await response.json();
+        const statuses = data.statuses || {};
+
+        document.querySelectorAll('.site-status-dot').forEach(dot => {
+            const addr = dot.dataset.siteAddress;
+            if (!addr) return;
+            const status = statuses[addr];
+            if (status === 'up') {
+                dot.className = 'site-status-dot up';
+                dot.title = 'Online';
+            } else if (status === 'down') {
+                dot.className = 'site-status-dot down';
+                dot.title = 'Offline';
+            } else {
+                dot.className = 'site-status-dot unknown';
+                dot.title = status || 'Unknown';
+            }
+        });
+    } catch (err) {
+        console.error('Health check error:', err);
+        document.querySelectorAll('.site-status-dot').forEach(dot => {
+            dot.className = 'site-status-dot unknown';
+            dot.title = 'Health check error';
+        });
+    }
+}
+
+function startHealthCheckLoop() {
+    if (healthCheckInterval) clearInterval(healthCheckInterval);
+    checkSitesHealth();
+    healthCheckInterval = setInterval(checkSitesHealth, 30000); // refresh every 30s
+}
+
+// Start health check when table is rendered
+const origRenderSitesTable = renderSitesTable;
+renderSitesTable = function() {
+    origRenderSitesTable();
+    // Delay health check slightly so DOM is ready
+    setTimeout(checkSitesHealth, 500);
+};
+
+// Start the periodic health check loop
+setTimeout(() => {
+    startHealthCheckLoop();
+}, 1000);

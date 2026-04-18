@@ -52,6 +52,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - On preference save: if geoBlockMode or geoBlockCountries changed, calls `_apply_geoblocking_to_caddyfile()`.
   - `_apply_geoblocking_to_caddyfile(enabled)`: reads Caddyfile, calls `_configure_caddyfile_geoblocking()`, writes back, reloads Caddy.
   - `_configure_caddyfile_geoblocking(content, enabled, flask_port)`: injects/removes `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` in each site block (marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments). Skips the global block.
+  - `POST /api/sites/health-check`: accepts `{"targets": {"addr": "http://host:port"}}`. Checks each backend with HEAD request (4s timeout, SSL verification skipped for HTTPS). Uses ThreadPoolExecutor (8 workers). Returns `{"statuses": {"addr": "up"|"down"|"unknown"}}`. 4xx/5xx responses count as "up" (server responds).
   - `_find_matching_brace()`, `_remove_directive_block()`, `_add_log_to_site_blocks()`, `_configure_caddyfile_logging_internal()`: Caddyfile parsing helpers.
 
 - stats_aggregator.py: Incremental log processor + stats query engine.
@@ -82,7 +83,6 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 - templates/index.html: Preferences page sections:
   - **GeoIP / Statistics**: Account ID input, License Key input, Test/Download buttons, manual .mmdb upload, status indicator.
   - **Geo-Blocking**: Mode select (Off / Block / Allow), searchable country list with flag emojis, selected countries as removable tags (chips). When enabled, injects `forward_auth` into Caddyfile site blocks.
-  - Site modal: "WebSocket / Streaming mode" checkbox (adds `flush_interval -1` to reverse_proxy).
 
 - templates/stats.html: Full-viewport CSS Grid dashboard (no scroll). Uses CSS custom properties.
   - D3 + TopoJSON world map heatmap from CDN (world-atlas@2).
@@ -93,9 +93,7 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
   - Stats API: `/api/stats?period=7d&host=` returns `top_countries` + `geoip_available`.
 
 - static/script.js: Caddyfile parsing uses `findMatchingBrace()`. Stats button opens `/stats?host=X`.
-  - Site configs have a `websocket` boolean field. When true, generates `reverse_proxy` with `flush_interval -1` (disables Caddy response buffering for WebSocket/SSE/streaming). Parsed back from Caddyfile by detecting `flush_interval` in reverse_proxy blocks.
-  - Table has "WS/Stream" column (checkbox toggle) for WebSocket/Streaming mode.
-  - Modal has "WebSocket / Streaming mode" checkbox with description.
+  - **Site health check**: colored dot (🟢up/🔴down/⚪unknown) next to each site name. Auto-refreshes every 30s. Uses `POST /api/sites/health-check` endpoint.
   - Geo-blocking UI: COUNTRY_DATA object (ISO 3166-1 alpha-2 → name), `countryFlag()` for emoji flags, `renderGeoBlockUI()` for show/hide and list rendering, `renderGeoSelectedTags()` for chip display.
   - `geoSelectedCountries` array: maintained in JS, saved/loaded as `geoBlockCountries` preference.
 
@@ -133,16 +131,6 @@ GEO-BLOCKING (forward_auth approach):
 - Mode "allow": allows only traffic from selected countries (blocks all others except "Unknown").
 - IP extraction: X-Real-Ip → X-Forwarded-For first entry → request.remote_addr.
 - `forward_auth` is NOT applied to CaddyPanel's own management port (not in Caddyfile site blocks).
-
-WEBSOCKET / STREAMING:
-- Per-site "WebSocket / Streaming mode" toggle in site modal and table.
-- When enabled, adds `flush_interval -1` to the `reverse_proxy` directive in Caddyfile.
-- This disables Caddy's response buffering, which is required for:
-  - WebSocket connections (web terminals, real-time apps)
-  - Server-Sent Events (SSE)
-  - Real-time dashboard graphs (long-polling/streaming)
-  - Any application that streams HTTP responses
-- Without this, Caddy buffers responses, breaking these features.
 
 THEME SYSTEM:
 - All themes use the same neutral gray base. Only accent colors differ.
@@ -193,7 +181,8 @@ COMPLETED_FEATURES:
 - Statistics dashboard: full-viewport CSS Grid layout, no-scroll. CSS variable theming. Clickable host names.
 - GeoIP country tracking: top 5 countries + world heatmap (D3+TopoJSON). Upload or download GeoLite2-Country.mmdb.
 - **Geo-blocking**: forward_auth-based IP country blocking/allowing. UI with mode select, country search, flag emoji tags. Automatic Caddyfile injection/removal of directives on preference save. LRU+TTL cache for forward-auth performance.
-- **WebSocket/Streaming mode**: Per-site toggle that injects `flush_interval -1` into `reverse_proxy` blocks. Table column + modal checkbox. Required for web terminals, real-time dashboards, SSE.
+- **Site health indicators**: colored dot (green=up, red=down, gray=unknown, pulsing gray=checking) next to each site name in the table. Checks backend reachability via `/api/sites/health-check` endpoint. Auto-refreshes every 30s. CSS-animated pulse during check.
+- Caddy log configuration wizard.
 - Multi-architecture Docker build (amd64 + arm64).
 - Automatic JSON logging configuration for all sites.
 

@@ -191,6 +191,25 @@ button:hover, .action-btn:hover { background-color: var(--accent-hover); }
 #sites-table td a:hover { text-decoration: underline; color: var(--accent); }
 #sites-table th:nth-child(4), #sites-table th:nth-child(5) { text-align: center; }
 
+/* ===== Site Health Indicator ===== */
+.site-status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+.site-status-dot.up { background-color: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,0.5); }
+.site-status-dot.down { background-color: #ef4444; box-shadow: 0 0 4px rgba(239,68,68,0.5); }
+.site-status-dot.checking { background-color: #9ca3af; animation: status-pulse 1.2s ease-in-out infinite; }
+.site-status-dot.unknown { background-color: #6b7280; }
+@keyframes status-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
 /* ===== Raw Caddyfile ===== */
 #raw-caddyfile-tab textarea {
     width: 98%;
@@ -298,7 +317,7 @@ button:hover, .action-btn:hover { background-color: var(--accent-hover); }
 /* ===== Toast ===== */
 #toast-container {
     position: fixed;
-    top: 20px; right: 20px;
+    bottom: 20px; right: 20px;
     z-index: 9999;
     display: flex;
     flex-direction: column;
