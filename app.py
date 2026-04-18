@@ -632,37 +632,53 @@ def sites_health_check():
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
         try:
-            req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'CaddyPanel-HealthCheck/1.0'})
+            req = urllib.request.Request(url, method='GET', headers={'User-Agent': 'CaddyPanel-HealthCheck/1.0'})
+            # Don't read the body - we only care if the server responds
             ctx = None
             if url.startswith('https://'):
                 import ssl
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
-            with urllib.request.urlopen(req, timeout=4, context=ctx) as resp:
-                return (site_addr, 'up')
+            resp = urllib.request.urlopen(req, timeout=3, context=ctx)
+            resp.read(1)  # Read just 1 byte to confirm connection, then close
+            resp.close()
+            return (site_addr, 'up')
         except urllib.error.HTTPError:
             # Server responded (even with 4xx/5xx) = it's up
             return (site_addr, 'up')
-        except (urllib.error.URLError, socket.timeout, OSError, ConnectionRefusedError):
+        except (urllib.error.URLError, socket.timeout, OSError, ConnectionRefusedError) as e:
+            print(f"Health check DOWN: {site_addr} ({url}) - {type(e).__name__}: {e}")
             return (site_addr, 'down')
-        except Exception:
+        except Exception as e:
+            print(f"Health check ERROR: {site_addr} ({url}) - {type(e).__name__}: {e}")
             return (site_addr, 'down')
 
     statuses = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(check_one, addr, url): addr for addr, url in targets.items()}
-        for future in as_completed(futures, timeout=10):
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(check_one, addr, url): addr for addr, url in targets.items()}
             try:
-                addr, status = future.result()
-                statuses[addr] = status
-            except Exception:
-                statuses[futures[future]] = 'error'
+                for future in as_completed(futures, timeout=15):
+                    try:
+                        addr, status = future.result()
+                        statuses[addr] = status
+                    except Exception as e:
+                        addr = futures[future]
+                        print(f"Health check future error for {addr}: {e}")
+                        statuses[addr] = 'down'
+            except TimeoutError:
+                # Some futures didn't complete in time
+                print(f"Health check: {len(targets) - len(statuses)} targets timed out")
+    except Exception as e:
+        print(f"Health check thread pool error: {e}")
 
+    # Any targets not yet in statuses timed out
     for addr in targets:
         if addr not in statuses:
-            statuses[addr] = 'unknown'
+            statuses[addr] = 'down'
 
+    print(f"Health check results: {statuses}")
     return jsonify({"statuses": statuses})
 
 

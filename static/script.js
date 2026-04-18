@@ -1194,9 +1194,15 @@ async function handleImportCaddyfile(event) {
 
 // --- Site Health Check ---
 let healthCheckInterval = null;
+let healthCheckInProgress = false;
 
 async function checkSitesHealth() {
-    if (siteConfigs.length === 0) return;
+    if (healthCheckInProgress) return;
+    if (siteConfigs.length === 0) {
+        console.log('[HealthCheck] No site configs yet, skipping.');
+        return;
+    }
+    healthCheckInProgress = true;
 
     // Collect targets: address -> reverse_proxy URL
     const targets = {};
@@ -1211,16 +1217,20 @@ async function checkSitesHealth() {
         }
     }
 
-    if (Object.keys(targets).length === 0) {
+    const targetCount = Object.keys(targets).length;
+    console.log(`[HealthCheck] Checking ${targetCount} target(s):`, targets);
+
+    if (targetCount === 0) {
         // No checkable sites — set all dots to unknown
         document.querySelectorAll('.site-status-dot').forEach(dot => {
             dot.className = 'site-status-dot unknown';
             dot.title = 'No backend to check';
         });
+        healthCheckInProgress = false;
         return;
     }
 
-    // Set all dots to "checking"
+    // Set dots for targeted sites to "checking"
     document.querySelectorAll('.site-status-dot').forEach(dot => {
         if (dot.dataset.siteAddress in targets) {
             dot.className = 'site-status-dot checking';
@@ -1232,18 +1242,24 @@ async function checkSitesHealth() {
         const response = await fetch('/api/sites/health-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({ targets: targets })
         });
+
         if (!response.ok) {
-            // Error — set all to unknown
+            const errorText = await response.text();
+            console.error(`[HealthCheck] API error ${response.status}:`, errorText);
             document.querySelectorAll('.site-status-dot').forEach(dot => {
                 dot.className = 'site-status-dot unknown';
                 dot.title = 'Health check failed';
             });
+            healthCheckInProgress = false;
             return;
         }
+
         const data = await response.json();
         const statuses = data.statuses || {};
+        console.log('[HealthCheck] Results:', statuses);
 
         document.querySelectorAll('.site-status-dot').forEach(dot => {
             const addr = dot.dataset.siteAddress;
@@ -1261,12 +1277,13 @@ async function checkSitesHealth() {
             }
         });
     } catch (err) {
-        console.error('Health check error:', err);
+        console.error('[HealthCheck] Fetch error:', err);
         document.querySelectorAll('.site-status-dot').forEach(dot => {
             dot.className = 'site-status-dot unknown';
             dot.title = 'Health check error';
         });
     }
+    healthCheckInProgress = false;
 }
 
 function startHealthCheckLoop() {
