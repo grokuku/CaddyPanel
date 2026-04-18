@@ -69,11 +69,114 @@ const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
 const testGeoipBtn = document.getElementById('test-geoip-btn');
 const downloadGeoipBtn = document.getElementById('download-geoip-btn');
 const geoipStatusText = document.getElementById('geoip-status-text');
+const geoBlockModeSelect = document.getElementById('geo-block-mode');
+const geoCountrySearch = document.getElementById('geo-country-search');
+const geoCountryList = document.getElementById('geo-country-list');
+const geoSelectedTags = document.getElementById('geo-selected-tags');
+const geoBlockCountriesGroup = document.getElementById('geo-block-countries-group');
 
 // --- Global State ---
 let currentPreferences = {};
 let siteConfigs = [];
 let isAutoSaving = false;
+let geoSelectedCountries = []; // Array of ISO country codes for geo-blocking
+
+// Country data (ISO 3166-1 alpha-2 → name + flag)
+const COUNTRY_DATA = {
+    AF:{n:'Afghanistan'},AL:{n:'Albania'},DZ:{n:'Algeria'},AD:{n:'Andorra'},AO:{n:'Angola'},
+    AG:{n:'Antigua \u0026 Barbuda'},AR:{n:'Argentina'},AM:{n:'Armenia'},AU:{n:'Australia'},AT:{n:'Austria'},
+    AZ:{n:'Azerbaijan'},BS:{n:'Bahamas'},BH:{n:'Bahrain'},BD:{n:'Bangladesh'},BY:{n:'Belarus'},
+    BE:{n:'Belgium'},BZ:{n:'Belize'},BJ:{n:'Benin'},BO:{n:'Bolivia'},BA:{n:'Bosnia'},
+    BW:{n:'Botswana'},BR:{n:'Brazil'},BN:{n:'Brunei'},BG:{n:'Bulgaria'},BF:{n:'Burkina Faso'},
+    BI:{n:'Burundi'},KH:{n:'Cambodia'},CM:{n:'Cameroon'},CA:{n:'Canada'},CV:{n:'Cape Verde'},
+    CF:{n:'Central Africa'},TD:{n:'Chad'},CL:{n:'Chile'},CN:{n:'China'},CO:{n:'Colombia'},
+    CD:{n:'Congo (DRC)'},CR:{n:'Costa Rica'},HR:{n:'Croatia'},CU:{n:'Cuba'},CY:{n:'Cyprus'},
+    CZ:{n:'Czechia'},DK:{n:'Denmark'},DJ:{n:'Djibouti'},DO:{n:'Dominican Rep.'},EC:{n:'Ecuador'},
+    EG:{n:'Egypt'},SV:{n:'El Salvador'},EE:{n:'Estonia'},ET:{n:'Ethiopia'},FI:{n:'Finland'},
+    FR:{n:'France'},GA:{n:'Gabon'},GE:{n:'Georgia'},DE:{n:'Germany'},GH:{n:'Ghana'},
+    GR:{n:'Greece'},GT:{n:'Guatemala'},GN:{n:'Guinea'},HT:{n:'Haiti'},HN:{n:'Honduras'},
+    HU:{n:'Hungary'},IS:{n:'Iceland'},IN:{n:'India'},ID:{n:'Indonesia'},IR:{n:'Iran'},
+    IQ:{n:'Iraq'},IE:{n:'Ireland'},IL:{n:'Israel'},IT:{n:'Italy'},JM:{n:'Jamaica'},
+    JP:{n:'Japan'},JO:{n:'Jordan'},KZ:{n:'Kazakhstan'},KE:{n:'Kenya'},KR:{n:'Korea (South)'},
+    KW:{n:'Kuwait'},LV:{n:'Latvia'},LB:{n:'Lebanon'},LY:{n:'Libya'},LT:{n:'Lithuania'},
+    LU:{n:'Luxembourg'},MG:{n:'Madagascar'},MY:{n:'Malaysia'},ML:{n:'Mali'},MT:{n:'Malta'},
+    MX:{n:'Mexico'},MD:{n:'Moldova'},MA:{n:'Morocco'},MZ:{n:'Mozambique'},MM:{n:'Myanmar'},
+    NA:{n:'Namibia'},NP:{n:'Nepal'},NL:{n:'Netherlands'},NZ:{n:'New Zealand'},NI:{n:'Nicaragua'},
+    NE:{n:'Niger'},NG:{n:'Nigeria'},MK:{n:'North Macedonia'},NO:{n:'Norway'},OM:{n:'Oman'},
+    PK:{n:'Pakistan'},PA:{n:'Panama'},PY:{n:'Paraguay'},PE:{n:'Peru'},PH:{n:'Philippines'},
+    PL:{n:'Poland'},PT:{n:'Portugal'},QA:{n:'Qatar'},RO:{n:'Romania'},RU:{n:'Russia'},
+    RW:{n:'Rwanda'},SA:{n:'Saudi Arabia'},SN:{n:'Senegal'},RS:{n:'Serbia'},SG:{n:'Singapore'},
+    SK:{n:'Slovakia'},SI:{n:'Slovenia'},SO:{n:'Somalia'},ZA:{n:'South Africa'},ES:{n:'Spain'},
+    LK:{n:'Sri Lanka'},SD:{n:'Sudan'},SE:{n:'Sweden'},CH:{n:'Switzerland'},SY:{n:'Syria'},
+    TW:{n:'Taiwan'},TJ:{n:'Tajikistan'},TZ:{n:'Tanzania'},TH:{n:'Thailand'},TN:{n:'Tunisia'},
+    TR:{n:'Turkey'},TM:{n:'Turkmenistan'},UG:{n:'Uganda'},UA:{n:'Ukraine'},AE:{n:'UAE'},
+    GB:{n:'United Kingdom'},US:{n:'United States'},UY:{n:'Uruguay'},UZ:{n:'Uzbekistan'},
+    VE:{n:'Venezuela'},VN:{n:'Vietnam'},YE:{n:'Yemen'},ZM:{n:'Zambia'},ZW:{n:'Zimbabwe'},
+    KP:{n:'Korea (North)'},MMR:{n:'Myanmar (old)'},XK:{n:'Kosovo'},PS:{n:'Palestine'}
+};
+function countryFlag(code) {
+    return code.split('').map(c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join('');
+}
+
+function renderGeoBlockUI() {
+    const mode = geoBlockModeSelect ? geoBlockModeSelect.value : 'off';
+    if (geoBlockCountriesGroup) geoBlockCountriesGroup.style.display = mode === 'off' ? 'none' : 'block';
+    renderGeoCountryList();
+    renderGeoSelectedTags();
+}
+
+function renderGeoCountryList() {
+    if (!geoCountryList) return;
+    const search = (geoCountrySearch ? geoCountrySearch.value : '').toLowerCase();
+    const codes = Object.keys(COUNTRY_DATA).filter(c => c.length === 2).sort((a,b) => COUNTRY_DATA[a].n.localeCompare(COUNTRY_DATA[b].n));
+    const filtered = search ? codes.filter(c => c.toLowerCase().includes(search) || COUNTRY_DATA[c].n.toLowerCase().includes(search)) : codes;
+    const maxShow = 50; // Performance: don't render hundreds of items
+    const toShow = filtered.slice(0, maxShow);
+
+    geoCountryList.innerHTML = toShow.map(c => {
+        const selected = geoSelectedCountries.includes(c);
+        return `<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;border-radius:3px;${selected ? 'background:var(--accent);color:var(--accent-contrast);' : ''}" data-code="${c}">
+            <span>${countryFlag(c)}</span>
+            <span style="flex:1">${COUNTRY_DATA[c].n}</span>
+            <span style="font-size:0.85em;opacity:0.8">${c}</span>
+            <span style="font-size:1.1em">${selected ? '\u2713' : '+'}</span>
+        </div>`;
+    }).join('');
+
+    if (filtered.length > maxShow) {
+        geoCountryList.innerHTML += `<div style="padding:4px 6px;color:var(--text-secondary);font-size:0.8em;">...and ${filtered.length - maxShow} more. Type to search.</div>`;
+    }
+
+    // Click handlers
+    geoCountryList.querySelectorAll('[data-code]').forEach(el => {
+        el.addEventListener('click', () => {
+            const code = el.dataset.code;
+            if (geoSelectedCountries.includes(code)) {
+                geoSelectedCountries = geoSelectedCountries.filter(c => c !== code);
+            } else {
+                geoSelectedCountries.push(code);
+            }
+            renderGeoBlockUI();
+        });
+    });
+}
+
+function renderGeoSelectedTags() {
+    if (!geoSelectedTags) return;
+    if (geoSelectedCountries.length === 0) {
+        geoSelectedTags.innerHTML = '<span style="font-size:0.8em;color:var(--text-secondary);">No countries selected</span>';
+        return;
+    }
+    geoSelectedTags.innerHTML = geoSelectedCountries.map(c =>
+        `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;background:var(--accent);color:var(--accent-contrast);font-size:0.8em;cursor:pointer;" data-remove="${c}" title="Click to remove">${countryFlag(c)} ${COUNTRY_DATA[c]?.n || c} \u00d7</span>`
+    ).join('');
+    geoSelectedTags.querySelectorAll('[data-remove]').forEach(el => {
+        el.addEventListener('click', () => {
+            geoSelectedCountries = geoSelectedCountries.filter(c => c !== el.dataset.remove);
+            renderGeoBlockUI();
+        });
+    });
+}
 
 // --- Toast Notification System ---
 function showToast(message, type = 'info', duration = 3000) {
@@ -213,6 +316,15 @@ if (savePrefsBtn) {
         });
     }
 }
+
+// --- Geo-blocking UI handlers ---
+if (geoBlockModeSelect) {
+    geoBlockModeSelect.addEventListener('change', renderGeoBlockUI);
+}
+if (geoCountrySearch) {
+    geoCountrySearch.addEventListener('input', renderGeoCountryList);
+}
+
 if (addHostBtn) {
     addHostBtn.addEventListener('click', () => openSiteModal());
 }
@@ -750,6 +862,8 @@ async function savePreferences() {
         globalAdminEmail: globalAdminEmailInput.value.trim(), 
         maxmindAccountId: maxmindAccountIdInput ? maxmindAccountIdInput.value.trim() : '',
         maxmindLicenseKey: maxmindLicenseKeyInput ? maxmindLicenseKeyInput.value.trim() : '',
+        geoBlockMode: geoBlockModeSelect ? geoBlockModeSelect.value : 'off',
+        geoBlockCountries: geoSelectedCountries,
         defaultSkipTlsVerify: defaultSkipTlsVerifyInput.checked, 
         defaultAuthentikEnabled: defaultAuthentikEnabledInput.checked, 
         defaultAuthentikOutpostUrl: defaultAuthentikOutpostUrlInput.value.trim(), 
@@ -809,6 +923,11 @@ async function loadPreferences() {
         if (defaultAuthentikTrustedProxiesInput) defaultAuthentikTrustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || "";
         if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.value = currentPreferences.maxmindLicenseKey || "";
         if (maxmindAccountIdInput) maxmindAccountIdInput.value = currentPreferences.maxmindAccountId || "";
+
+        // --- Geo-blocking state ---
+        geoSelectedCountries = Array.isArray(currentPreferences.geoBlockCountries) ? [...currentPreferences.geoBlockCountries] : [];
+        if (geoBlockModeSelect) geoBlockModeSelect.value = currentPreferences.geoBlockMode || 'off';
+        renderGeoBlockUI();
 
         // Enable/disable GeoIP download button based on credentials presence
         const hasBoth = maxmindAccountIdInput?.value.trim() && maxmindLicenseKeyInput?.value.trim();

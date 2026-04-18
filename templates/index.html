@@ -123,6 +123,25 @@
                         <small style="display:block;margin-top:4px;color:var(--text-secondary);">Download from <a href="https://www.maxmind.com/en/accounts/200922/geoip/downloads" target="_blank" rel="noopener">MaxMind portal</a> or run <code>geoipupdate</code> on your host, then upload the <code>GeoLite2-Country.mmdb</code> file here.</small>
                     </div>
                 <hr>
+                    <h3>Geo-Blocking</h3>
+                    <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 10px 0;">Block or allow traffic by country. Requires an active GeoIP database. Uses Caddy's <code>forward_auth</code> to check each request.</p>
+                    <div class="form-group">
+                        <label for="geo-block-mode">Mode:</label>
+                        <select id="geo-block-mode" style="width:100%;padding:6px 8px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:0.9em;">
+                            <option value="off">Off — No geo-blocking</option>
+                            <option value="block">Block — Block selected countries</option>
+                            <option value="allow">Allow — Allow only selected countries</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="geo-block-countries-group" style="display:none;">
+                        <label>Selected Countries:</label>
+                        <div style="display:flex;gap:6px;margin-bottom:6px;">
+                            <input type="text" id="geo-country-search" placeholder="Search country..." style="flex:1;padding:6px 8px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:0.9em;">
+                        </div>
+                        <div id="geo-country-list" style="max-height:160px;overflow-y:auto;border:1px solid var(--border-strong);border-radius:4px;padding:4px;background:var(--bg-input);font-size:0.85em;"></div>
+                        <div id="geo-selected-tags" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;"></div>
+                    </div>
+                <hr>
                     <button type="button" id="save-prefs-btn">Save Preferences</button>
                 </form>
         </div>
