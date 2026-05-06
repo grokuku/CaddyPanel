@@ -6,16 +6,10 @@ import json
 import os
 import re 
 import subprocess
-import time
 from pathlib import Path
 from functools import wraps
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import urllib.request
-import urllib.error
-import socket
 from flask import (Flask, render_template, url_for, request, jsonify, abort,
-                   session, redirect, flash, Response)
+                   session, redirect, flash)
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 import secrets
@@ -43,9 +37,7 @@ DEFAULT_PREFERENCES = {
     "defaultAuthentikUri": "/outpost.goauthentik.io/auth/caddy", 
     "defaultAuthentikCopyHeaders": "X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks", 
     "defaultAuthentikTrustedProxies": "private_ranges", 
-    "defaultSkipTlsVerify": False,
-    "geoBlockMode": "off",
-    "geoBlockCountries": []
+    "defaultSkipTlsVerify": False 
 }
 
 app = Flask(__name__) 
@@ -65,28 +57,6 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Initialize stats database (works both with dev server and gunicorn)
 stats_aggregator.init_stats_db(STATS_DB_PATH)
-
-# --- GeoIP check cache for forward-auth endpoint ---
-_geo_check_cache = OrderedDict()
-_GEO_CHECK_MAX = 10000
-_GEO_CHECK_TTL = 300  # 5 minutes
-
-FLASK_PORT = int(os.environ.get('FLASK_PORT', 5000))
-
-def _geo_check_get_country(ip):
-    """Resolve IP to country code with LRU+TTL cache."""
-    now = time.time()
-    if ip in _geo_check_cache:
-        country, ts = _geo_check_cache[ip]
-        if now - ts < _GEO_CHECK_TTL:
-            _geo_check_cache.move_to_end(ip)
-            return country
-        del _geo_check_cache[ip]
-    country = stats_aggregator._resolve_country(ip)
-    _geo_check_cache[ip] = (country, now)
-    if len(_geo_check_cache) > _GEO_CHECK_MAX:
-        _geo_check_cache.popitem(last=False)
-    return country
 
 # Configure GeoIP (optional – if mmdb file exists at the configured path)
 GEOIP_DB_PATH = os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb'))
@@ -266,10 +236,7 @@ def post_preferences():
     try:
         new_prefs_input = request.get_json()
         if not isinstance(new_prefs_input, dict): return jsonify({"status": "error", "message": "Invalid data format"}), 400
-        # --- Detect geo-blocking changes ---
         current_prefs = load_preferences()
-        old_geo_mode = current_prefs.get('geoBlockMode', 'off')
-        old_geo_countries = current_prefs.get('geoBlockCountries', [])
         validated_prefs = {} 
         validation_errors = []
         for key, default_value in DEFAULT_PREFERENCES.items():
@@ -292,14 +259,6 @@ def post_preferences():
             if save_preferences(validated_prefs): return jsonify({"status": "warning", "message": "Preferences saved with errors.", "errors": validation_errors, "saved_prefs": validated_prefs}), 200
             else: return jsonify({"status": "error", "message": "Failed to save preferences with errors"}), 500
         if save_preferences(validated_prefs):
-            # --- Handle geo-blocking Caddyfile changes ---
-            new_geo_mode = validated_prefs.get('geoBlockMode', 'off')
-            new_geo_countries = validated_prefs.get('geoBlockCountries', [])
-            geo_mode_changed = (old_geo_mode != new_geo_mode)
-            geo_countries_changed = (old_geo_countries != new_geo_countries)
-            if geo_mode_changed or geo_countries_changed:
-                _apply_geoblocking_to_caddyfile(new_geo_mode != 'off' and bool(new_geo_countries))
-
             # Auto-download GeoIP DB if credentials provided and DB not yet present
             account_id = validated_prefs.get('maxmindAccountId', '')
             license_key = validated_prefs.get('maxmindLicenseKey', '')
@@ -498,49 +457,6 @@ def api_geoip_upload():
     except Exception as e:
         return jsonify({"status": "error", "message": f"Upload failed: {e}"}), 500
 
-
-@app.route('/api/geoip/check', methods=['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
-def api_geoip_check():
-    """Forward-auth endpoint for Caddy geo-blocking.
-    Returns 200 if allowed, 403 if blocked.
-    No @login_required — Caddy calls this as a subrequest for every visitor request."""
-    # If GeoIP not available, allow everything
-    if not stats_aggregator.is_geoip_available():
-        return Response(status=200)
-
-    prefs = load_preferences()
-    mode = prefs.get('geoBlockMode', 'off')
-    blocked = prefs.get('geoBlockCountries', [])
-
-    if mode == 'off' or not blocked:
-        return Response(status=200)
-
-    # Get client IP: X-Real-Ip > X-Forwarded-For > remote_addr
-    ip = (request.headers.get('X-Real-Ip')
-          or request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-          or request.remote_addr)
-    if not ip:
-        return Response(status=200)
-
-    country = _geo_check_get_country(ip)
-
-    if mode == 'block' and country in blocked:
-        return Response('Forbidden', status=403, content_type='text/plain')
-    if mode == 'allow' and country not in blocked and country != 'Unknown':
-        return Response('Forbidden', status=403, content_type='text/plain')
-
-    return Response(status=200)
-
-
-@app.route('/api/geoip/countries', methods=['GET'])
-@login_required
-def api_geoip_countries():
-    """Return list of countries seen in stats (for the geo-blocking UI)."""
-    stats = stats_aggregator.get_stats(period='30d', host=None)
-    countries = stats.get('top_countries', [])
-    result = [{'code': c['country'], 'name': c['country']} for c in countries]
-    return jsonify(result)
-
 @app.route('/api/browse', methods=['GET'])
 @login_required
 def browse_files():
@@ -608,79 +524,6 @@ def reload_caddy_config():
     except FileNotFoundError: return jsonify({"status": "error", "message": "Caddy command not found."}), 500
     except subprocess.TimeoutExpired: return jsonify({"status": "error", "message": "Reload command timed out."}), 500
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
-
-
-@app.route('/api/sites/health-check', methods=['POST'])
-@login_required
-def sites_health_check():
-    """Check health of site backends. Expects JSON: {"targets": {"site_addr": "http://host:port", ...}}
-    Returns: {"statuses": {"site_addr": "up"|"down"|"unknown", ...}}
-    """
-    data = request.get_json(silent=True)
-    if not data or 'targets' not in data:
-        return jsonify({"status": "error", "message": "Missing targets"}), 400
-
-    targets = data['targets']
-    if not isinstance(targets, dict) or len(targets) > 100:
-        return jsonify({"status": "error", "message": "Invalid targets (max 200 per batch)"}), 400
-
-    def check_one(site_addr, target_url):
-        """Check if a backend is reachable. Returns (site_addr, status)."""
-        if not target_url:
-            return (site_addr, 'unknown')
-        url = target_url.strip()
-        if not url.startswith(('http://', 'https://')):
-            url = 'http://' + url
-        try:
-            req = urllib.request.Request(url, method='GET', headers={'User-Agent': 'CaddyPanel-HealthCheck/1.0'})
-            # Don't read the body - we only care if the server responds
-            ctx = None
-            if url.startswith('https://'):
-                import ssl
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-            resp = urllib.request.urlopen(req, timeout=3, context=ctx)
-            resp.read(1)  # Read just 1 byte to confirm connection, then close
-            resp.close()
-            return (site_addr, 'up')
-        except urllib.error.HTTPError:
-            # Server responded (even with 4xx/5xx) = it's up
-            return (site_addr, 'up')
-        except (urllib.error.URLError, socket.timeout, OSError, ConnectionRefusedError) as e:
-            print(f"Health check DOWN: {site_addr} ({url}) - {type(e).__name__}: {e}")
-            return (site_addr, 'down')
-        except Exception as e:
-            print(f"Health check ERROR: {site_addr} ({url}) - {type(e).__name__}: {e}")
-            return (site_addr, 'down')
-
-    statuses = {}
-    try:
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(check_one, addr, url): addr for addr, url in targets.items()}
-            try:
-                for future in as_completed(futures, timeout=30):
-                    try:
-                        addr, status = future.result()
-                        statuses[addr] = status
-                    except Exception as e:
-                        addr = futures[future]
-                        print(f"Health check future error for {addr}: {e}")
-                        statuses[addr] = 'down'
-            except TimeoutError:
-                # Some futures didn't complete in time
-                print(f"Health check: {len(targets) - len(statuses)} targets timed out")
-    except Exception as e:
-        print(f"Health check thread pool error: {e}")
-
-    # Any targets not yet in statuses timed out
-    for addr in targets:
-        if addr not in statuses:
-            statuses[addr] = 'down'
-
-    print(f"Health check results: {statuses}")
-    return jsonify({"statuses": statuses})
-
 
 # --- Real Log Data Processing for Stats Page ---
 # --- Stats Routes (backed by stats_aggregator) ---
@@ -885,110 +728,6 @@ def _add_log_to_site_blocks(content):
 
 
 # --- API to configure logging in Caddyfile ---
-
-def _apply_geoblocking_to_caddyfile(enabled):
-    """Apply or remove forward_auth geo-blocking directives in the Caddyfile.
-    Called when geo-blocking preferences change. Reloads Caddy if modified."""
-    caddyfile_path = CADDY_CONFIG_FILE
-    if not caddyfile_path.exists():
-        return
-
-    content = caddyfile_path.read_text(encoding='utf-8')
-    new_content = _configure_caddyfile_geoblocking(content, enabled, FLASK_PORT)
-
-    if new_content != content:
-        caddyfile_path.write_text(new_content, encoding='utf-8')
-        try:
-            result = subprocess.run(
-                ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"],
-                capture_output=True, text=True, timeout=30, check=False
-            )
-            if result.returncode != 0:
-                print(f"Geo-blocking: Caddy reload failed: {result.stderr or result.stdout}")
-        except Exception as e:
-            print(f"Geo-blocking: Caddy reload error: {e}")
-
-
-def _configure_caddyfile_geoblocking(content, enabled, flask_port):
-    """Add or remove forward_auth geo-blocking directives in every site block.
-    Marked with # CADDYPANEL_GEOBLOCK / # END_CADDYPANEL_GEOBLOCK comments
-    so they can be cleanly removed later."""
-    GEO_START = '# CADDYPANEL_GEOBLOCK'
-    GEO_END = '# END_CADDYPANEL_GEOBLOCK'
-
-    if not content.strip():
-        return content
-
-    # --- Step 1: Remove existing geo-block directives ---
-    lines = content.split('\n')
-    new_lines = []
-    skip = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped == GEO_START:
-            skip = True
-            continue
-        if stripped == GEO_END:
-            skip = False
-            continue
-        if not skip:
-            new_lines.append(line)
-    content = '\n'.join(new_lines)
-
-    if not enabled:
-        return content  # Removal only
-
-    # --- Step 2: Find global block boundaries to skip it ---
-    global_start = None
-    global_end = None
-    for i, ch in enumerate(content):
-        if ch in (' ', '\t', '\n', '\r'):
-            continue
-        if ch == '{':
-            global_start = i
-            global_end = _find_matching_brace(content, i)
-        break
-
-    # --- Step 3: Find all top-level site blocks ---
-    blocks = []
-    pos = 0
-    while pos < len(content):
-        idx = content.find('{', pos)
-        if idx == -1:
-            break
-        if global_start is not None and global_end is not None:
-            if global_start <= idx <= global_end:
-                pos = idx + 1
-                continue
-        line_start = content.rfind('\n', 0, idx) + 1
-        line_before = content[line_start:idx].strip()
-        if not line_before or line_before.startswith('#'):
-            pos = idx + 1
-            continue
-        close = _find_matching_brace(content, idx)
-        if close == -1:
-            pos = idx + 1
-            continue
-        blocks.append((idx, close))
-        pos = close + 1
-
-    # --- Step 4: Inject forward_auth into each site block (reverse order) ---
-    for block_open, _ in reversed(blocks):
-        after_open = content[block_open + 1:block_open + 200]
-        indent_match = re.search(r'\n(\t+| +)\S', after_open)
-        indent = indent_match.group(1) if indent_match else '\t'
-        block_snippet = (
-            f'\n{GEO_START}\n'
-            f'{indent}@notWebSocket not header Connection *Upgrade*\n'
-            f'{indent}forward_auth @notWebSocket localhost:{flask_port} {{\n'
-            f'{indent}\turi /api/geoip/check\n'
-            f'{indent}}}\n'
-            f'{GEO_END}'
-        )
-        content = content[:block_open + 1] + block_snippet + content[block_open + 1:]
-
-    return content
-
 
 def _configure_caddyfile_logging_internal():
     """Internal: add/modify global log config in Caddyfile for JSON stdout logging,

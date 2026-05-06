@@ -410,16 +410,6 @@
                     if (Array.isArray(item)) { label = item[0]; value = item[1]; }
                     else { label = item.path || item.agent || 'Unknown'; value = item.count; }
                     li.innerHTML = `<span class="label" title="${label}">${label}</span> <span class="value">${value.toLocaleString()}</span>`;
-                    // Make host names clickable to filter by that host
-                    if (ulId === 'requests-by-host') {
-                        li.style.cursor = 'pointer';
-                        li.querySelector('.label').style.color = 'var(--accent)';
-                        li.addEventListener('click', () => {
-                            currentHost = label;
-                            document.getElementById('host-select').value = label;
-                            fetchAndDisplayStats();
-                        });
-                    }
                     ul.appendChild(li);
                 });
             } else {

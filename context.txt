@@ -39,112 +39,70 @@ Entry point for work session. Objective: conciseness for AI, not for humans. Tra
 ======================================================================
 
 - app.py: Flask backend. Serves UI/API. Manages users/prefs/Caddyfile. Triggers Caddy reload.
-  - Preferences include: theme, caddyfilePath, globalAdminEmail, maxmindAccountId, maxmindLicenseKey, geoBlockMode, geoBlockCountries, defaultAuthentikEnabled, defaultAuthentikOutpostUrl, defaultAuthentikUri, defaultAuthentikCopyHeaders, defaultAuthentikTrustedProxies, defaultSkipTlsVerify.
-  - Credentials masking: GET /api/preferences masks maxmindAccountId (****XXX) and maxmindLicenseKey (********XXXX). POST detects masked values and keeps existing ones.
-  - `_try_geoip_download_and_configure(account_id, license_key)`: Strategy 1: runs `geoipupdate` binary (most reliable). Strategy 2: HTTP download from MaxMind API with Basic Auth. Returns (success, message).
-  - `POST /api/geoip/download`: triggers download using stored credentials.
-  - `POST /api/geoip/upload`: accepts .mmdb file upload, saves to GEOIP_DB_PATH, configures stats_aggregator.
-  - `GET /api/geoip/status`: returns {geoip_available: bool}.
-  - `GET /api/geoip/test`: tests credentials without downloading full DB.
-  - `GET /api/geoip/countries`: returns countries seen in stats (for geo-blocking UI).
-  - `GET/POST/PUT/DELETE/PATCH/OPTIONS /api/geoip/check`: **forward-auth endpoint for Caddy geo-blocking**. No @login_required. Checks client IP country against geoBlockMode + geoBlockCountries. Returns 200 (allow) or 403 (block). Uses LRU+TTL cache (10K entries, 5min TTL) for IP→country lookups. If GeoIP unavailable or mode=off, always returns 200.
-  - On preference save: if maxmindAccountId + maxmindLicenseKey provided and GeoIP DB not present, auto-downloads.
-  - On preference save: if geoBlockMode or geoBlockCountries changed, calls `_apply_geoblocking_to_caddyfile()`.
-  - `_apply_geoblocking_to_caddyfile(enabled)`: reads Caddyfile, calls `_configure_caddyfile_geoblocking()`, writes back, reloads Caddy.
-  - `_configure_caddyfile_geoblocking(content, enabled, flask_port)`: injects/removes `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` in each site block (marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments). Skips the global block.
-  - `POST /api/sites/health-check`: accepts `{"targets": {"addr": "http://host:port"}}` (max 200 per batch). Checks each backend with GET request (3s timeout, SSL verification skipped for HTTPS). Uses ThreadPoolExecutor (10 workers, 30s overall timeout). Returns `{"statuses": {"addr": "up"|"down"}}`. 4xx/5xx responses count as "up" (server responds). Dots that time out default to "down". Proper TimeoutError handling for as_completed.
-  - `_find_matching_brace()`, `_remove_directive_block()`, `_add_log_to_site_blocks()`, `_configure_caddyfile_logging_internal()`: Caddyfile parsing helpers.
-
+  - Uses `_find_matching_brace()` and `_remove_directive_block()` for proper Caddyfile parsing (handles nested braces, strings, comments).
+  - `_add_log_to_site_blocks(content, global_start, global_end)`: Scans top-level blocks outside the global block; adds `log` directive to any site block that lacks one. Preserves indentation. Processes in reverse order to keep offsets valid.
+  - `_configure_caddyfile_logging_internal()`: Two-step approach: (1) add/replace global `log { output stdout format json level INFO }` block, (2) add `log` to every site block that lacks one. This ensures Caddy actually emits access logs.
+  - Secret key: auto-generated via `secrets.token_hex(32)` if FLASK_SECRET_KEY is not set or uses default insecure key.
+  - Session cookies: HTTPOnly=True, SameSite=Lax.
+  - `CADDY_CONFIG_FILE` reads from both `CADDY_CONFIG` and `CADDY_CONFIG_FILE` env vars (fallback chain).
+  - Stats API: `/api/stats?period=7d&host=` and `/api/stats/hosts`. Backed by `stats_aggregator.py`. No longer reads raw logs on every request — uses SQLite aggregation.
+  - `STATS_DB_PATH = APP_DATA_DIR / 'stats.db'` — initialized both at module level (for gunicorn) and in `__main__` (for dev server).
+  - Error rate counts only 5xx (not 4xx).
+  - `CADDY_ACCESS_LOG_FILE` default: `/var/log/caddy_panel/caddy_access.json.log` (persisted via Docker volume).
+  - `GEOIP_DB_PATH` env var: path to GeoLite2-Country.mmdb (default: `APP_DATA_DIR/GeoLite2-Country.mmdb`). Auto-configured if file exists at startup.
+  - `maxmindLicenseKey` preference: stored in preferences.json. Masked in GET API (`********XXXX`). Auto-downloads GeoIP DB on preference save if key provided and DB not present.
+  - `POST /api/geoip/download`: manual trigger to download GeoIP DB using stored license key.
+  - `GET /api/geoip/status`: returns `{geoip_available: bool}`.
+  - `_try_geoip_download_and_configure(license_key)`: downloads GeoLite2-Country.mmdb from MaxMind, extracts, configures stats_aggregator.
 - stats_aggregator.py: Incremental log processor + stats query engine.
-  - SQLite DB with `PRAGMA journal_mode=WAL`. Two tables: hourly_stats (7d retention) and daily_stats (365d retention).
-  - Schema columns: bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON, top_countries JSON.
-  - `process_new_logs()`: extracts `request.remote_ip` (fallback: X-Forwarded-For, X-Real-Ip). Resolves to ISO country code via `geoip2` if available, else 'Unknown'. Stores in `top_countries`.
-  - `configure_geoip(db_path)`: loads MaxMind GeoLite2-Country.mmdb. Graceful if unavailable.
-  - `_resolve_country(ip_str)`: returns ISO 3166-1 alpha-2 code or 'Unknown'. Also used by forward-auth endpoint via app.py cache.
-  - `is_geoip_available()`: checks if GeoIP reader is loaded.
-  - `get_stats()`: returns `top_countries` (top 10) + `geoip_available` (bool).
-  - DB migration: on init, `ALTER TABLE ADD COLUMN top_countries` if missing.
+  - SQLite DB with `PRAGMA journal_mode=WAL` for safe concurrent access.
+  - Two tables: `hourly_stats` (retention 7d) and `daily_stats` (retention 365d). Schema: `(bucket, host, total, status_1xx..5xx, total_duration, total_size, error_count, top_paths JSON, top_uas JSON, top_countries JSON)`.
+  - `_parse_ts(ts_value)`: Accepts both numeric (epoch) and string (RFC3339/ISO 8601) timestamps.
+  - `process_new_logs()`: Extracts `request.remote_ip` (falls back to `X-Forwarded-For` / `X-Real-Ip`). Resolves to ISO country code via `geoip2` if available, else 'Unknown'. Stores in `top_countries`.
+  - `configure_geoip(db_path)`: Optional. Loads MaxMind GeoLite2-Country.mmdb. If unavailable, country stats return 'Unknown'.
+  - `_resolve_country(ip_str)`: Returns ISO 3166-1 alpha-2 code or 'Unknown'.
+  - `is_geoip_available()`: Check if GeoIP DB is loaded.
+  - `get_stats()`: Now includes `top_countries` (top 10 by count) and `geoip_available` (bool).
+  - DB migration: on init, `ALTER TABLE ADD COLUMN top_countries` if column missing.
+- Dockerfile: Multi-stage build. Installs Caddy binary, Python deps, app code. Defines `CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log`. Creates and chowns `/var/log/caddy_panel`.
+- docker-compose.yml: Deployment orchestration. Defines service, volumes (including `./caddy_logs:/var/log/caddy_panel` for persistent logs), env vars. `CADDY_ACCESS_LOG_FILE` explicitly set.
+- docker/entrypoint.sh: Init script. No longer depends on `jq`. Creates default configs, manages permissions.
+  - Auto-configures Caddyfile logging: always runs Python heredoc (no more grep-skip). Adds global log block + `log` directive to every site block.
+  - Uses `python3 << 'PYEOF'` heredoc (single-quoted delimiter) to avoid bash double-quote escaping issues. Reads `CADDY_CONFIG_FILE` from environment via `os.environ`.
+  - Creates `/var/log/caddy_panel` directory and chowns it.
+  - GeoIP: if `MAXMIND_LICENSE_KEY` is set and GeoLite2-Country.mmdb not yet present, auto-downloads it to `APP_DATA_DIR/GeoLite2-Country.mmdb`. Exports `GEOIP_DB_PATH` env var.
+- docker/supervisord.conf: Manages `caddy` (root) and `flaskapp` (appuser) processes.
+  - Caddy runs WITHOUT `--resume` flag (uses Caddyfile on startup).
+  - Caddy stdout → `/var/log/caddy_panel/caddy_access.json.log` (persisted via volume).
+  - Single `user=root` for caddy (removed duplicate).
+  - Flaskapp environment passes both `CADDY_CONFIG` and `CADDY_CONFIG_FILE`, plus `CADDY_ACCESS_LOG_FILE`.
+- templates/index.html: XSS protection via `|tojson|replace('<\/', '<\\/')|safe` for initial data script.
+- templates/login.html & setup.html: Apply stored theme from localStorage on page load.
+- templates/stats.html: Full viewport dashboard with CSS Grid layout (no scroll). Period selector + host filter. KPI cards, status bar, country cards, world heatmap (D3+TopoJSON from CDN), timeseries chart (Chart.js). Top 5 countries with flag emojis + bar indicators. Graceful if GeoIP unavailable.
+- static/script.js: Caddyfile parsing uses `findMatchingBrace()` (proper nested brace handling). Validates modal inputs. Stats button opens `/stats?host=X`.
+- static/style.css: Dark theme styles for auth pages.
+- caddyfile/Caddyfile: Example Caddyfile for initialization. Has global `log { output stdout format json level INFO }` (no `time_format rfc3339`).
+- requirements.txt: Flask, Werkzeug, gunicorn.
 
-- Dockerfile: Multi-stage build.
-  - Stage 1 (caddy_builder): downloads Caddy binary from GitHub releases (supports amd64 + arm64).
-  - Stage 2 (geoip_builder): downloads `geoipupdate` binary from MaxMind GitHub releases (v7.0.1, amd64 + arm64).
-  - Stage 3 (final): python:3.10-slim-bullseye. Installs supervisor + curl. Copies Caddy + geoipupdate binaries from builder stages.
-  - Installs `geoip2` via pip.
-  - `GEOIP_DB_PATH` env var defaults to `/app_data/GeoLite2-Country.mmdb`.
-  - `FLASK_PORT` env var defaults to 5000.
-
-- docker/entrypoint.sh:
-  - Auto-configures Caddyfile logging via Python heredoc.
-  - GeoIP download: tries `geoipupdate` first, then falls back to `curl` with Basic Auth.
-  - Generates `/app_data/GeoIP.conf` for `geoipupdate` on the fly.
-
-- docker-compose.yml: Documents `MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` env vars (commented out).
-
-- templates/index.html: Preferences page sections:
-  - **GeoIP / Statistics**: Account ID input, License Key input, Test/Download buttons, manual .mmdb upload, status indicator.
-  - **Geo-Blocking**: Mode select (Off / Block / Allow), searchable country list with flag emojis, selected countries as removable tags (chips). When enabled, injects `forward_auth` into Caddyfile site blocks.
-
-- templates/stats.html: Full-viewport CSS Grid dashboard (no scroll). Uses CSS custom properties.
-  - D3 + TopoJSON world map heatmap from CDN (world-atlas@2).
-  - Top 5 countries with flag emojis.
-  - **Host names are clickable**: clicking a host in the "Requests by Host" list sets the host filter and refreshes stats.
-  - KPI cards, status bar, list cards with overflow-y auto.
-  - Chart.js timeseries.
-  - Stats API: `/api/stats?period=7d&host=` returns `top_countries` + `geoip_available`.
-
-- static/script.js: Caddyfile parsing uses `findMatchingBrace()`. Stats button opens `/stats?host=X`.
-  - **Site health check**: colored dot (🟢up/🔴down/⚪unknown) next to each site name. Auto-refreshes every 30s. Uses `POST /api/sites/health-check` endpoint. Batching: targets split into batches of 25, sent sequentially to avoid API limits. Dots update progressively as each batch completes. `healthCheckInProgress` guard prevents concurrent runs.
-  - Geo-blocking UI: COUNTRY_DATA object (ISO 3166-1 alpha-2 → name), `countryFlag()` for emoji flags, `renderGeoBlockUI()` for show/hide and list rendering, `renderGeoSelectedTags()` for chip display.
-  - `geoSelectedCountries` array: maintained in JS, saved/loaded as `geoBlockCountries` preference.
-
-- static/style.css: 10 themes (5 light + 5 dark). Neutral gray base, only accent color varies. CSS custom properties.
-
-- templates/login.html & setup.html: Use CSS variables from style.css.
-
-- requirements.txt: Flask, Werkzeug, gunicorn, geoip2>=4.0.0.
 
 ======================================================================
 3. KEY DESIGN DECISIONS
 ======================================================================
 
-CADDY LOGGING:
-- Both global `log { output stdout format json }` AND `log` in each site block are required.
-- No `time_format rfc3339` (causes string timestamps that break stats_aggregator).
-- `_parse_ts()` handles both numeric and string timestamps.
+CADDY LOGGING — CRITICAL ARCHITECTURE:
+- Caddy does NOT emit access logs for a site unless that site block has a `log` directive. The global `log { output stdout format json }` only configures the DEFAULT logger format/output — it does NOT automatically emit access logs.
+- Therefore, both the global block AND each site block must have `log`. The entrypoint.sh and `_configure_caddyfile_logging_internal()` both ensure this.
+- Caddy outputs JSON to stdout. Supervisord captures stdout → `/var/log/caddy_panel/caddy_access.json.log`.
+- This file is persisted via Docker volume (`./caddy_logs:/var/log/caddy_panel`).
+- IMPORTANT: `time_format rfc3339` in the Caddyfile global log config causes `ts` to be a STRING (e.g., `"2024-01-15T10:30:00Z"`). The stats_aggregator only processed numeric `ts`, so ALL entries were silently skipped → "No processable log entries found." The fix: removed `time_format rfc3339` from all Caddyfile templates AND added `_parse_ts()` to handle both formats.
 
-GEOIP:
-- Three ways to get the GeoLite2-Country.mmdb database:
-  1. UI Preferences → enter Account ID + License Key → "Download" (uses `geoipupdate` then HTTP fallback)
-  2. UI Preferences → "Upload manually" .mmdb file
-  3. Docker env vars `MAXMIND_ACCOUNT_ID` + `MAXMIND_LICENSE_KEY` → auto-download at startup
-- `geoipupdate` is the primary download method. HTTP Basic Auth is fallback.
-- If no GeoIP DB is available, country stats show "Unknown" and the map shows "No geographic data".
-- Credentials are masked in the GET /api/preferences response.
+HEREDOC FOR PYTHON IN ENTRYPOINT.SH:
+- Must use `python3 << 'PYEOF'` (single-quoted delimiter). This tells bash to NOT process any escapes, variables, or backslashes inside the heredoc. Plain Python code can be written without bash double-quote escaping hell.
+- Must read environment variables via `os.environ['CADDY_CONFIG_FILE']` instead of `'$CADDY_CONFIG_FILE'` since the heredoc doesn't expand bash variables.
 
-GEO-BLOCKING (forward_auth approach):
-- Uses Caddy's built-in `forward_auth` directive (no Caddy plugin needed, no xcaddy rebuild).
-- When enabled, injects `forward_auth localhost:FLASK_PORT { uri /api/geoip/check }` into every site block in the Caddyfile.
-- Marked with `# CADDYPANEL_GEOBLOCK` / `# END_CADDYPANEL_GEOBLOCK` comments for clean removal.
-- Flask endpoint `/api/geoip/check` resolves client IP → country via geoip2 (with LRU+TTL cache of 10K entries, 5min TTL).
-- Mode "off": no blocking, `forward_auth` directives removed from Caddyfile.
-- Mode "block": blocks traffic from selected countries.
-- Mode "allow": allows only traffic from selected countries (blocks all others except "Unknown").
-- IP extraction: X-Real-Ip → X-Forwarded-For first entry → request.remote_addr.
-- `forward_auth` is NOT applied to CaddyPanel's own management port (not in Caddyfile site blocks).
+DOCKER BUILD CACHE ISSUE:
+- GitHub Actions workflow uses `cache-from: type=gha` which can serve stale Docker layers. If a file change doesn't seem to take effect in the container despite being committed, bust the cache with `no-cache: true` in the workflow, then re-enable cache once confirmed working.
 
-THEME SYSTEM:
-- All themes use the same neutral gray base. Only accent colors differ.
-- CSS custom properties defined per theme class on body.
-
-STATS LAYOUT:
-- Full viewport (100vh, overflow hidden) CSS Grid: 3 columns × 3 rows.
-- KPI cards in row 1 left, Countries + world map in row 1-2 right.
-- Host names clickable → filters stats to that host.
-
-DOCKER BUILD:
-- Multi-stage: caddy_builder → geoip_builder → final.
-- geoipupdate binary from GitHub releases (supports amd64 + arm64).
-- python:3.10-slim-bullseye base image.
 
 ======================================================================
 4. PROJECT STATUS
@@ -152,23 +110,20 @@ DOCKER BUILD:
 
 ACTIVE_BUGS / KNOWN_LIMITATIONS:
 - No CSRF protection on POST endpoints.
-- No login rate-limiting.
+- No login rate-limiting (brute-force possible).
 - No password change feature.
-- Single-user system.
-- MaxMind HTTP API download may return 401 even with valid credentials (geoipupdate more reliable).
-- forward_auth adds ~5-10ms latency per request (Flask subrequest for IP→country lookup). Acceptable for self-hosted services but not suited for very high-traffic sites.
-- forward_auth depends on Flask being up; if Flask crashes, geo-blocked sites return 502 (no fail-open).
-- BASE_DIR for file browsing is CWD (includes app source code).
+- Single-user system (no multi-user support).
+- BASE_DIR for file browsing is CWD, which includes app source code.
 
 ROADMAP:
 - Add CSRF protection.
 - Add login rate-limiting.
 - Add password change feature.
-- Restrict `/api/browse` and `/api/readfile` to specific directories.
-- Per-site geo-blocking (currently applies to all site blocks globally).
-- Consider xcaddy build with caddy-geoip plugin for zero-latency in-process geo-blocking.
+- Restrict `/api/browse` and `/api/readfile` to specific directories only.
+- Multi-user/role support.
 
 COMPLETED_FEATURES:
+- Translation of French comments to English.
 - Containerized architecture (Docker/Compose).
 - Process management (Supervisor).
 - Automatic initialization (entrypoint.sh).
@@ -176,23 +131,43 @@ COMPLETED_FEATURES:
 - User authentication.
 - Caddyfile management UI (Configurator + Raw Editor).
 - Automatic saving and reloading of Caddy.
-- Preferences management UI (including GeoIP + Geo-blocking sections).
+- Preferences management UI.
 - Statistics page with SQLite-backed aggregation (v1.3).
-- Statistics dashboard: full-viewport CSS Grid layout, no-scroll. CSS variable theming. Clickable host names.
-- GeoIP country tracking: top 5 countries + world heatmap (D3+TopoJSON). Upload or download GeoLite2-Country.mmdb.
-- **Geo-blocking**: forward_auth-based IP country blocking/allowing. UI with mode select, country search, flag emoji tags. Automatic Caddyfile injection/removal of directives on preference save. LRU+TTL cache for forward-auth performance.
-- **Site health indicators**: colored dot (green=up, red=down, gray=unknown) next to each site name in the table. Checks backend reachability via `/api/sites/health-check` endpoint (batched, 25 per request). Auto-refreshes every 30s. During re-check, dots pulse with their last known color (green pulse, red pulse, or gray pulse if no previous state) — never reset to gray. CSS transition on background-color. `data-last-status` attribute tracks last known state on each dot element.
+- Statistics dashboard: full-viewport CSS Grid layout, no-scroll. GeoIP country tracking with top 5 countries + world heatmap (D3+TopoJSON). Optional MaxMind GeoLite2 database (auto-downloaded if MAXMIND_LICENSE_KEY set).
 - Caddy log configuration wizard.
-- Multi-architecture Docker build (amd64 + arm64).
-- Automatic JSON logging configuration for all sites.
+- Multi-architecture Docker build.
+- Automatic JSON logging configuration for all sites (entrypoint + app.py).
 
-COMPLETED_BUGFIXES (v1.5):
-- MODERATE: Stats cards growing infinitely vertically. Fix: CSS Grid with min-height:0, overflow:hidden/auto.
-- MODERATE: Themes overly colorful. Fix: complete redesign with CSS custom properties. Neutral gray base, only accent colors vary.
-- IMPORTANT: GeoIP download via MaxMind API returned 401. Fix: geoipupdate as primary method (GitHub releases binary). Added manual .mmdb upload. Added Test Connection button.
-- IMPORTANT: maxmindLicenseKey alone insufficient. Fix: added maxmindAccountId preference field.
+COMPLETED_BUGFIXES (v1.4):
+- CRITICAL: entrypoint.sh Python inline script had bash double-quote escaping hell — `python3 -c "..."` with nested backslashes produced `SyntaxError: unterminated string literal`. Fixed by switching to `python3 << 'PYEOF'` heredoc with single-quoted delimiter (no bash escaping) + `os.environ` for variables.
+- CRITICAL: Caddy access logs not emitted despite global `log { format json }` config. Root cause: Caddy requires each site block to have a `log` directive to emit access logs; global config only sets default logger format. Fix: `_add_log_to_site_blocks()` in app.py + equivalent in entrypoint.sh Python heredoc.
+- CRITICAL: `time_format rfc3339` in Caddyfile global log caused all entries to be silently skipped by stats_aggregator (`isinstance(ts, (int, float))` check fails on string timestamps). Fix: removed `time_format rfc3339` from all Caddyfile templates; added `_parse_ts()` to handle both numeric and RFC3339 timestamps.
+- MODERATE: Stats chart "Requests per Hour" expanded vertically infinitely. Fix: changed `.chart-container` from `min-height: 300px` to `height: 350px`.
+- MODERATE: Docker build cache (GHA) serving stale layers. Fix: temporarily set `no-cache: true` in workflow.
+- MODERATE: Log file `/var/log/caddy_access.json.log` lost on container recreation. Fix: moved to `/var/log/caddy_panel/caddy_access.json.log` persisted via Docker volume.
+- MODERATE: `_add_log_to_site_blocks()` had unterminated docstring (two `"` instead of three `"`) and broken result-building logic. Rewrote with cleaner reverse-order offset approach.
 
-Earlier bugfixes (v1.4-, v1.3-, v1.2): see git history.
+COMPLETED_BUGFIXES (v1.3):
+- CRITICAL: Stats lost on log rotation/restart. Now persisted in SQLite with incremental aggregation.
+- IMPORTANT: Stats API re-parsed entire log file on every request. Now reads only new entries via byte offset tracking.
+- IMPORTANT: No long-term stats history. Now retains 7 days of hourly + 365 days of daily.
+- IMPORTANT: No per-site stats. 📊 button opens `/stats?host=X`.
+- MODERATE: Timeseries used fixed 10-min buckets. Now adapts: hourly for 24h/7d, daily for 30d+.
+
+COMPLETED_BUGFIXES (v1.2):
+- CRITICAL: XSS via `</script>` injection. Fixed with `|replace('</', '<\\/')|safe`.
+- CRITICAL: TypeError from trailing commas in exception handlers. Fixed.
+- CRITICAL: Regex Caddyfile parsing failed with nested braces. Rewritten with proper brace-matching parsers.
+- CRITICAL: Hardcoded insecure Flask secret key. Now auto-generates.
+- IMPORTANT: `datetime.fromtimestamp()` used local timezone but displayed "UTC". Fixed with `timezone.utc`.
+- IMPORTANT: Caddy `--resume` flag caused stale config. Flag removed.
+- IMPORTANT: Duplicate `user=root` in supervisord.conf. Removed.
+- IMPORTANT: 4xx counted in error_rate. Now only 5xx counted.
+- IMPORTANT: `jq` not installed in container. Replaced with `[ -s ]`.
+- IMPORTANT: `CADDY_CONFIG` vs `CADDY_CONFIG_FILE` inconsistency. Flask reads both.
+- MODERATE: Session cookie security. Added HTTPOnly, SameSite=Lax.
+- MODERATE: Duplicate `'header'` in JS knownDirectives. Replaced with Set.
+
 
 ======================================================================
 5. MAINTENANCE RULES FOR THIS FILE

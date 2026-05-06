@@ -69,114 +69,11 @@ const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
 const testGeoipBtn = document.getElementById('test-geoip-btn');
 const downloadGeoipBtn = document.getElementById('download-geoip-btn');
 const geoipStatusText = document.getElementById('geoip-status-text');
-const geoBlockModeSelect = document.getElementById('geo-block-mode');
-const geoCountrySearch = document.getElementById('geo-country-search');
-const geoCountryList = document.getElementById('geo-country-list');
-const geoSelectedTags = document.getElementById('geo-selected-tags');
-const geoBlockCountriesGroup = document.getElementById('geo-block-countries-group');
 
 // --- Global State ---
 let currentPreferences = {};
 let siteConfigs = [];
 let isAutoSaving = false;
-let geoSelectedCountries = []; // Array of ISO country codes for geo-blocking
-
-// Country data (ISO 3166-1 alpha-2 → name + flag)
-const COUNTRY_DATA = {
-    AF:{n:'Afghanistan'},AL:{n:'Albania'},DZ:{n:'Algeria'},AD:{n:'Andorra'},AO:{n:'Angola'},
-    AG:{n:'Antigua \u0026 Barbuda'},AR:{n:'Argentina'},AM:{n:'Armenia'},AU:{n:'Australia'},AT:{n:'Austria'},
-    AZ:{n:'Azerbaijan'},BS:{n:'Bahamas'},BH:{n:'Bahrain'},BD:{n:'Bangladesh'},BY:{n:'Belarus'},
-    BE:{n:'Belgium'},BZ:{n:'Belize'},BJ:{n:'Benin'},BO:{n:'Bolivia'},BA:{n:'Bosnia'},
-    BW:{n:'Botswana'},BR:{n:'Brazil'},BN:{n:'Brunei'},BG:{n:'Bulgaria'},BF:{n:'Burkina Faso'},
-    BI:{n:'Burundi'},KH:{n:'Cambodia'},CM:{n:'Cameroon'},CA:{n:'Canada'},CV:{n:'Cape Verde'},
-    CF:{n:'Central Africa'},TD:{n:'Chad'},CL:{n:'Chile'},CN:{n:'China'},CO:{n:'Colombia'},
-    CD:{n:'Congo (DRC)'},CR:{n:'Costa Rica'},HR:{n:'Croatia'},CU:{n:'Cuba'},CY:{n:'Cyprus'},
-    CZ:{n:'Czechia'},DK:{n:'Denmark'},DJ:{n:'Djibouti'},DO:{n:'Dominican Rep.'},EC:{n:'Ecuador'},
-    EG:{n:'Egypt'},SV:{n:'El Salvador'},EE:{n:'Estonia'},ET:{n:'Ethiopia'},FI:{n:'Finland'},
-    FR:{n:'France'},GA:{n:'Gabon'},GE:{n:'Georgia'},DE:{n:'Germany'},GH:{n:'Ghana'},
-    GR:{n:'Greece'},GT:{n:'Guatemala'},GN:{n:'Guinea'},HT:{n:'Haiti'},HN:{n:'Honduras'},
-    HU:{n:'Hungary'},IS:{n:'Iceland'},IN:{n:'India'},ID:{n:'Indonesia'},IR:{n:'Iran'},
-    IQ:{n:'Iraq'},IE:{n:'Ireland'},IL:{n:'Israel'},IT:{n:'Italy'},JM:{n:'Jamaica'},
-    JP:{n:'Japan'},JO:{n:'Jordan'},KZ:{n:'Kazakhstan'},KE:{n:'Kenya'},KR:{n:'Korea (South)'},
-    KW:{n:'Kuwait'},LV:{n:'Latvia'},LB:{n:'Lebanon'},LY:{n:'Libya'},LT:{n:'Lithuania'},
-    LU:{n:'Luxembourg'},MG:{n:'Madagascar'},MY:{n:'Malaysia'},ML:{n:'Mali'},MT:{n:'Malta'},
-    MX:{n:'Mexico'},MD:{n:'Moldova'},MA:{n:'Morocco'},MZ:{n:'Mozambique'},MM:{n:'Myanmar'},
-    NA:{n:'Namibia'},NP:{n:'Nepal'},NL:{n:'Netherlands'},NZ:{n:'New Zealand'},NI:{n:'Nicaragua'},
-    NE:{n:'Niger'},NG:{n:'Nigeria'},MK:{n:'North Macedonia'},NO:{n:'Norway'},OM:{n:'Oman'},
-    PK:{n:'Pakistan'},PA:{n:'Panama'},PY:{n:'Paraguay'},PE:{n:'Peru'},PH:{n:'Philippines'},
-    PL:{n:'Poland'},PT:{n:'Portugal'},QA:{n:'Qatar'},RO:{n:'Romania'},RU:{n:'Russia'},
-    RW:{n:'Rwanda'},SA:{n:'Saudi Arabia'},SN:{n:'Senegal'},RS:{n:'Serbia'},SG:{n:'Singapore'},
-    SK:{n:'Slovakia'},SI:{n:'Slovenia'},SO:{n:'Somalia'},ZA:{n:'South Africa'},ES:{n:'Spain'},
-    LK:{n:'Sri Lanka'},SD:{n:'Sudan'},SE:{n:'Sweden'},CH:{n:'Switzerland'},SY:{n:'Syria'},
-    TW:{n:'Taiwan'},TJ:{n:'Tajikistan'},TZ:{n:'Tanzania'},TH:{n:'Thailand'},TN:{n:'Tunisia'},
-    TR:{n:'Turkey'},TM:{n:'Turkmenistan'},UG:{n:'Uganda'},UA:{n:'Ukraine'},AE:{n:'UAE'},
-    GB:{n:'United Kingdom'},US:{n:'United States'},UY:{n:'Uruguay'},UZ:{n:'Uzbekistan'},
-    VE:{n:'Venezuela'},VN:{n:'Vietnam'},YE:{n:'Yemen'},ZM:{n:'Zambia'},ZW:{n:'Zimbabwe'},
-    KP:{n:'Korea (North)'},MMR:{n:'Myanmar (old)'},XK:{n:'Kosovo'},PS:{n:'Palestine'}
-};
-function countryFlag(code) {
-    return code.split('').map(c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join('');
-}
-
-function renderGeoBlockUI() {
-    const mode = geoBlockModeSelect ? geoBlockModeSelect.value : 'off';
-    if (geoBlockCountriesGroup) geoBlockCountriesGroup.style.display = mode === 'off' ? 'none' : 'block';
-    renderGeoCountryList();
-    renderGeoSelectedTags();
-}
-
-function renderGeoCountryList() {
-    if (!geoCountryList) return;
-    const search = (geoCountrySearch ? geoCountrySearch.value : '').toLowerCase();
-    const codes = Object.keys(COUNTRY_DATA).filter(c => c.length === 2).sort((a,b) => COUNTRY_DATA[a].n.localeCompare(COUNTRY_DATA[b].n));
-    const filtered = search ? codes.filter(c => c.toLowerCase().includes(search) || COUNTRY_DATA[c].n.toLowerCase().includes(search)) : codes;
-    const maxShow = 50; // Performance: don't render hundreds of items
-    const toShow = filtered.slice(0, maxShow);
-
-    geoCountryList.innerHTML = toShow.map(c => {
-        const selected = geoSelectedCountries.includes(c);
-        return `<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;border-radius:3px;${selected ? 'background:var(--accent);color:var(--accent-contrast);' : ''}" data-code="${c}">
-            <span>${countryFlag(c)}</span>
-            <span style="flex:1">${COUNTRY_DATA[c].n}</span>
-            <span style="font-size:0.85em;opacity:0.8">${c}</span>
-            <span style="font-size:1.1em">${selected ? '\u2713' : '+'}</span>
-        </div>`;
-    }).join('');
-
-    if (filtered.length > maxShow) {
-        geoCountryList.innerHTML += `<div style="padding:4px 6px;color:var(--text-secondary);font-size:0.8em;">...and ${filtered.length - maxShow} more. Type to search.</div>`;
-    }
-
-    // Click handlers
-    geoCountryList.querySelectorAll('[data-code]').forEach(el => {
-        el.addEventListener('click', () => {
-            const code = el.dataset.code;
-            if (geoSelectedCountries.includes(code)) {
-                geoSelectedCountries = geoSelectedCountries.filter(c => c !== code);
-            } else {
-                geoSelectedCountries.push(code);
-            }
-            renderGeoBlockUI();
-        });
-    });
-}
-
-function renderGeoSelectedTags() {
-    if (!geoSelectedTags) return;
-    if (geoSelectedCountries.length === 0) {
-        geoSelectedTags.innerHTML = '<span style="font-size:0.8em;color:var(--text-secondary);">No countries selected</span>';
-        return;
-    }
-    geoSelectedTags.innerHTML = geoSelectedCountries.map(c =>
-        `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;background:var(--accent);color:var(--accent-contrast);font-size:0.8em;cursor:pointer;" data-remove="${c}" title="Click to remove">${countryFlag(c)} ${COUNTRY_DATA[c]?.n || c} \u00d7</span>`
-    ).join('');
-    geoSelectedTags.querySelectorAll('[data-remove]').forEach(el => {
-        el.addEventListener('click', () => {
-            geoSelectedCountries = geoSelectedCountries.filter(c => c !== el.dataset.remove);
-            renderGeoBlockUI();
-        });
-    });
-}
 
 // --- Toast Notification System ---
 function showToast(message, type = 'info', duration = 3000) {
@@ -316,15 +213,6 @@ if (savePrefsBtn) {
         });
     }
 }
-
-// --- Geo-blocking UI handlers ---
-if (geoBlockModeSelect) {
-    geoBlockModeSelect.addEventListener('change', renderGeoBlockUI);
-}
-if (geoCountrySearch) {
-    geoCountrySearch.addEventListener('input', renderGeoCountryList);
-}
-
 if (addHostBtn) {
     addHostBtn.addEventListener('click', () => openSiteModal());
 }
@@ -413,8 +301,6 @@ function renderSitesTable() {
         row.dataset.index = index;
 
         const cellHost = row.insertCell();
-        cellHost.style.display = 'flex';
-        cellHost.style.alignItems = 'center';
         const cellForward = row.insertCell();
         const cellSSL = row.insertCell();
         const cellSkipTls = row.insertCell();
@@ -438,11 +324,6 @@ function renderSitesTable() {
             siteLink.href = '#';
         }
         siteLink.target = '_blank';
-        const statusDot = document.createElement('span');
-        statusDot.className = 'site-status-dot checking';
-        statusDot.title = 'Checking...';
-        statusDot.dataset.siteAddress = site.address || '';
-        cellHost.appendChild(statusDot);
         cellHost.appendChild(siteLink);
 
         if (site.is_custom) {
@@ -759,9 +640,9 @@ function generateCaddyfileBlock(site) {
         const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
         blockContent += `\treverse_proxy ${p}`;
         if (site.tls_skip_verify && p.startsWith('https://')) { 
-            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t\tflush_interval -1\n\t}\n`; 
+            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
         } else { 
-            blockContent += ` {\n\t\tflush_interval -1\n\t}\n`; 
+            blockContent += `\n`; 
         } 
     }
 
@@ -783,12 +664,6 @@ function generateCaddyfileBlock(site) {
     } else if (site.forward_auth) { 
         blockContent += `\n\t# --- Authentik Configuration (Enabled but Outpost URL missing or invalid) --- #\n`;
     }
-    
-    // Preserve geo-blocking directives injected by CaddyPanel backend (if any)
-    if (site.geoblock_directives) {
-        blockContent += '\n' + site.geoblock_directives + '\n';
-    }
-    
     return blockContent.trim();
 }
 
@@ -875,8 +750,6 @@ async function savePreferences() {
         globalAdminEmail: globalAdminEmailInput.value.trim(), 
         maxmindAccountId: maxmindAccountIdInput ? maxmindAccountIdInput.value.trim() : '',
         maxmindLicenseKey: maxmindLicenseKeyInput ? maxmindLicenseKeyInput.value.trim() : '',
-        geoBlockMode: geoBlockModeSelect ? geoBlockModeSelect.value : 'off',
-        geoBlockCountries: geoSelectedCountries,
         defaultSkipTlsVerify: defaultSkipTlsVerifyInput.checked, 
         defaultAuthentikEnabled: defaultAuthentikEnabledInput.checked, 
         defaultAuthentikOutpostUrl: defaultAuthentikOutpostUrlInput.value.trim(), 
@@ -936,11 +809,6 @@ async function loadPreferences() {
         if (defaultAuthentikTrustedProxiesInput) defaultAuthentikTrustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || "";
         if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.value = currentPreferences.maxmindLicenseKey || "";
         if (maxmindAccountIdInput) maxmindAccountIdInput.value = currentPreferences.maxmindAccountId || "";
-
-        // --- Geo-blocking state ---
-        geoSelectedCountries = Array.isArray(currentPreferences.geoBlockCountries) ? [...currentPreferences.geoBlockCountries] : [];
-        if (geoBlockModeSelect) geoBlockModeSelect.value = currentPreferences.geoBlockMode || 'off';
-        renderGeoBlockUI();
 
         // Enable/disable GeoIP download button based on credentials presence
         const hasBoth = maxmindAccountIdInput?.value.trim() && maxmindLicenseKeyInput?.value.trim();
@@ -1063,59 +931,29 @@ function parseCaddyfile(content) {
             continue;
         }
 
-        // Strip geo-blocking injected blocks from siteContent before parsing
-        // (same approach as Python _configure_caddyfile_geoblocking Step 1)
-        let cleanedSiteContent = '';
-        let geoblockDirectives = '';
-        const siteLines = siteContent.split('\n');
-        let inGeoblock = false;
-        for (const line of siteLines) {
-            const stripped = line.trim();
-            if (stripped === '# CADDYPANEL_GEOBLOCK') {
-                inGeoblock = true;
-                geoblockDirectives += line + '\n';
-                continue;
-            }
-            if (stripped === '# END_CADDYPANEL_GEOBLOCK') {
-                inGeoblock = false;
-                geoblockDirectives += line;
-                continue;
-            }
-            if (inGeoblock) {
-                geoblockDirectives += line + '\n';
-            } else {
-                cleanedSiteContent += line + '\n';
-            }
-        }
-        // Trim trailing whitespace from cleaned content
-        cleanedSiteContent = cleanedSiteContent.trimEnd() + '\n';
-        if (geoblockDirectives.trim()) {
-            siteData.geoblock_directives = geoblockDirectives.trimEnd();
-        }
-
         // Standard parsing logic
         siteData.tls = 'auto';
         siteData.tls_skip_verify = false;
         siteData.forward_auth = null;
 
-        const rootMatch = cleanedSiteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
+        const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
         if (rootMatch) siteData.root = rootMatch[1];
-        if (/^\s*file_server/m.test(cleanedSiteContent)) siteData.file_server = true;
+        if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
 
         // Parse reverse_proxy using brace matching for transport sub-blocks
-        const rpLineMatch = cleanedSiteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
+        const rpLineMatch = siteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
         if (rpLineMatch && !rpLineMatch[1].includes('/outpost.goauthentik.io/')) {
             siteData.reverse_proxy = rpLineMatch[1].trim();
             // Check for transport block with tls_insecure_skip_verify
-            const rpIndex = cleanedSiteContent.indexOf('reverse_proxy');
-            const rpBracePos = cleanedSiteContent.indexOf('{', rpIndex);
+            const rpIndex = siteContent.indexOf('reverse_proxy');
+            const rpBracePos = siteContent.indexOf('{', rpIndex);
             if (rpBracePos !== -1) {
                 // Verify this brace is on the same line as the reverse_proxy directive
-                const lineBefore = cleanedSiteContent.substring(Math.max(0, rpBracePos - 60), rpBracePos);
+                const lineBefore = siteContent.substring(Math.max(0, rpBracePos - 60), rpBracePos);
                 if (lineBefore.includes('reverse_proxy')) {
-                    const rpClosePos = findMatchingBrace(cleanedSiteContent, rpBracePos);
+                    const rpClosePos = findMatchingBrace(siteContent, rpBracePos);
                     if (rpClosePos !== -1) {
-                        const rpBlockContent = cleanedSiteContent.substring(rpBracePos + 1, rpClosePos);
+                        const rpBlockContent = siteContent.substring(rpBracePos + 1, rpClosePos);
                         if (rpBlockContent.includes('tls_insecure_skip_verify')) {
                             siteData.tls_skip_verify = true;
                         }
@@ -1124,17 +962,17 @@ function parseCaddyfile(content) {
             }
         }
 
-        const tlsMatch = cleanedSiteContent.match(/^\s*tls\s+([^\s]+)/m);
+        const tlsMatch = siteContent.match(/^\s*tls\s+([^\s]+)/m);
         if (tlsMatch) siteData.tls = tlsMatch[1].trim();
 
         // Parse log block with proper brace matching
-        const logLineMatch = cleanedSiteContent.match(/^\s*log\s*\{/m);
+        const logLineMatch = siteContent.match(/^\s*log\s*\{/m);
         if (logLineMatch) {
-            const logOpenPos = cleanedSiteContent.indexOf('{', cleanedSiteContent.indexOf('log'));
+            const logOpenPos = siteContent.indexOf('{', siteContent.indexOf('log'));
             if (logOpenPos !== -1) {
-                const logClosePos = findMatchingBrace(cleanedSiteContent, logOpenPos);
+                const logClosePos = findMatchingBrace(siteContent, logOpenPos);
                 if (logClosePos !== -1) {
-                    const logBlockContent = cleanedSiteContent.substring(logOpenPos + 1, logClosePos);
+                    const logBlockContent = siteContent.substring(logOpenPos + 1, logClosePos);
                     const logOutputMatch = logBlockContent.match(/^\s*output\s+([^\s]+)/m);
                     if (logOutputMatch) siteData.log = logOutputMatch[1];
                 }
@@ -1142,18 +980,15 @@ function parseCaddyfile(content) {
         }
 
         // Parse forward_auth with proper brace matching
-        // Geo-blocking forward_auth blocks have already been stripped above,
-        // so any remaining forward_auth is Authentik (or similar)
-        const faLineMatch = cleanedSiteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
+        const faLineMatch = siteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
         if (faLineMatch) {
-            const faOutpostUrl = faLineMatch[1].trim();
-            const faOpenPos = cleanedSiteContent.indexOf('{', cleanedSiteContent.indexOf('forward_auth'));
+            const faOpenPos = siteContent.indexOf('{', siteContent.indexOf('forward_auth'));
             if (faOpenPos !== -1) {
-                const faClosePos = findMatchingBrace(cleanedSiteContent, faOpenPos);
+                const faClosePos = findMatchingBrace(siteContent, faOpenPos);
                 if (faClosePos !== -1) {
-                    const faBlockContent = cleanedSiteContent.substring(faOpenPos + 1, faClosePos);
+                    const faBlockContent = siteContent.substring(faOpenPos + 1, faClosePos);
                     siteData.forward_auth = {
-                        outpost_url: faOutpostUrl,
+                        outpost_url: faLineMatch[1].trim(),
                         uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
                         copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
                         trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
@@ -1230,138 +1065,3 @@ async function handleImportCaddyfile(event) {
     };
     reader.readAsText(file);
 }
-
-// --- Site Health Check ---
-let healthCheckInterval = null;
-let healthCheckInProgress = false;
-const HEALTH_BATCH_SIZE = 25;
-
-function chunkObject(obj, size) {
-    const keys = Object.keys(obj);
-    const chunks = [];
-    for (let i = 0; i < keys.length; i += size) {
-        const chunk = {};
-        keys.slice(i, i + size).forEach(k => chunk[k] = obj[k]);
-        chunks.push(chunk);
-    }
-    return chunks;
-}
-
-function applyStatuses(statuses) {
-    document.querySelectorAll('.site-status-dot').forEach(dot => {
-        const addr = dot.dataset.siteAddress;
-        if (!addr) return;
-        const status = statuses[addr];
-        if (status === 'up') {
-            dot.className = 'site-status-dot up';
-            dot.dataset.lastStatus = 'up';
-            dot.title = 'Online';
-        } else if (status === 'down') {
-            dot.className = 'site-status-dot down';
-            dot.dataset.lastStatus = 'down';
-            dot.title = 'Offline';
-        } else if (status) {
-            dot.className = 'site-status-dot unknown';
-            dot.dataset.lastStatus = '';
-            dot.title = status;
-        }
-    });
-}
-
-async function checkSitesHealth() {
-    if (healthCheckInProgress) return;
-    if (siteConfigs.length === 0) return;
-    healthCheckInProgress = true;
-
-    // Collect targets: address -> reverse_proxy URL
-    const targets = {};
-    for (const site of siteConfigs) {
-        if (site.address && site.reverse_proxy && !site.is_custom) {
-            let target = site.reverse_proxy.trim();
-            if (target.startsWith('@')) continue;
-            if (!target.startsWith('http://') && !target.startsWith('https://')) {
-                target = 'http://' + target;
-            }
-            targets[site.address] = target;
-        }
-    }
-
-    const targetCount = Object.keys(targets).length;
-    console.log(`[HealthCheck] Checking ${targetCount} target(s) in batches of ${HEALTH_BATCH_SIZE}`);
-
-    if (targetCount === 0) {
-        // No checkable sites — set dots without a backend to unknown
-        document.querySelectorAll('.site-status-dot').forEach(dot => {
-            if (!dot.dataset.lastStatus) {
-                dot.className = 'site-status-dot unknown';
-                dot.title = 'No backend to check';
-            }
-        });
-        healthCheckInProgress = false;
-        return;
-    }
-
-    // Set targeted dots to "checking" — keep last known color
-    document.querySelectorAll('.site-status-dot').forEach(dot => {
-        if (dot.dataset.siteAddress in targets) {
-            const last = dot.dataset.lastStatus;
-            if (last === 'up') {
-                dot.className = 'site-status-dot checking up';
-            } else if (last === 'down') {
-                dot.className = 'site-status-dot checking down';
-            } else {
-                dot.className = 'site-status-dot checking';
-            }
-            dot.title = 'Checking...';
-        }
-    });
-
-    // Split into batches and process sequentially
-    const batches = chunkObject(targets, HEALTH_BATCH_SIZE);
-
-    for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        try {
-            const response = await fetch('/api/sites/health-check', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ targets: batch })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} API error ${response.status}:`, errorText);
-                // Keep dots in checking state with last color — don't reset to gray
-                continue;
-            }
-
-            const data = await response.json();
-            const statuses = data.statuses || {};
-            applyStatuses(statuses);
-        } catch (err) {
-            console.error(`[HealthCheck] Batch ${i + 1}/${batches.length} fetch error:`, err);
-            // Keep dots in checking state with last color — don't reset to gray
-        }
-    }
-
-    healthCheckInProgress = false;
-}
-
-function startHealthCheckLoop() {
-    if (healthCheckInterval) clearInterval(healthCheckInterval);
-    checkSitesHealth();
-    healthCheckInterval = setInterval(checkSitesHealth, 30000);
-}
-
-// Start health check when table is rendered
-const origRenderSitesTable = renderSitesTable;
-renderSitesTable = function() {
-    origRenderSitesTable();
-    setTimeout(checkSitesHealth, 500);
-};
-
-// Start the periodic health check loop
-setTimeout(() => {
-    startHealthCheckLoop();
-}, 1000);
