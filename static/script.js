@@ -1063,10 +1063,34 @@ function parseCaddyfile(content) {
             continue;
         }
 
-        // Preserve geo-blocking injected blocks (forward_auth from CaddyPanel)
-        const geoBlockMatch = siteContent.match(/[\s\S]*?(# CADDYPANEL_GEOBLOCK[\s\S]*?# END_CADDYPANEL_GEOBLOCK)/);
-        if (geoBlockMatch) {
-            siteData.geoblock_directives = geoBlockMatch[1];
+        // Strip geo-blocking injected blocks from siteContent before parsing
+        // (same approach as Python _configure_caddyfile_geoblocking Step 1)
+        let cleanedSiteContent = '';
+        let geoblockDirectives = '';
+        const siteLines = siteContent.split('\n');
+        let inGeoblock = false;
+        for (const line of siteLines) {
+            const stripped = line.trim();
+            if (stripped === '# CADDYPANEL_GEOBLOCK') {
+                inGeoblock = true;
+                geoblockDirectives += line + '\n';
+                continue;
+            }
+            if (stripped === '# END_CADDYPANEL_GEOBLOCK') {
+                inGeoblock = false;
+                geoblockDirectives += line;
+                continue;
+            }
+            if (inGeoblock) {
+                geoblockDirectives += line + '\n';
+            } else {
+                cleanedSiteContent += line + '\n';
+            }
+        }
+        // Trim trailing whitespace from cleaned content
+        cleanedSiteContent = cleanedSiteContent.trimEnd() + '\n';
+        if (geoblockDirectives.trim()) {
+            siteData.geoblock_directives = geoblockDirectives.trimEnd();
         }
 
         // Standard parsing logic
@@ -1074,24 +1098,24 @@ function parseCaddyfile(content) {
         siteData.tls_skip_verify = false;
         siteData.forward_auth = null;
 
-        const rootMatch = siteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
+        const rootMatch = cleanedSiteContent.match(/^\s*root\s+\*\s+([^\s]+)/m);
         if (rootMatch) siteData.root = rootMatch[1];
-        if (/^\s*file_server/m.test(siteContent)) siteData.file_server = true;
+        if (/^\s*file_server/m.test(cleanedSiteContent)) siteData.file_server = true;
 
         // Parse reverse_proxy using brace matching for transport sub-blocks
-        const rpLineMatch = siteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
+        const rpLineMatch = cleanedSiteContent.match(/^\s*reverse_proxy\s+([^\s{]+)/m);
         if (rpLineMatch && !rpLineMatch[1].includes('/outpost.goauthentik.io/')) {
             siteData.reverse_proxy = rpLineMatch[1].trim();
             // Check for transport block with tls_insecure_skip_verify
-            const rpIndex = siteContent.indexOf('reverse_proxy');
-            const rpBracePos = siteContent.indexOf('{', rpIndex);
+            const rpIndex = cleanedSiteContent.indexOf('reverse_proxy');
+            const rpBracePos = cleanedSiteContent.indexOf('{', rpIndex);
             if (rpBracePos !== -1) {
                 // Verify this brace is on the same line as the reverse_proxy directive
-                const lineBefore = siteContent.substring(Math.max(0, rpBracePos - 60), rpBracePos);
+                const lineBefore = cleanedSiteContent.substring(Math.max(0, rpBracePos - 60), rpBracePos);
                 if (lineBefore.includes('reverse_proxy')) {
-                    const rpClosePos = findMatchingBrace(siteContent, rpBracePos);
+                    const rpClosePos = findMatchingBrace(cleanedSiteContent, rpBracePos);
                     if (rpClosePos !== -1) {
-                        const rpBlockContent = siteContent.substring(rpBracePos + 1, rpClosePos);
+                        const rpBlockContent = cleanedSiteContent.substring(rpBracePos + 1, rpClosePos);
                         if (rpBlockContent.includes('tls_insecure_skip_verify')) {
                             siteData.tls_skip_verify = true;
                         }
@@ -1100,17 +1124,17 @@ function parseCaddyfile(content) {
             }
         }
 
-        const tlsMatch = siteContent.match(/^\s*tls\s+([^\s]+)/m);
+        const tlsMatch = cleanedSiteContent.match(/^\s*tls\s+([^\s]+)/m);
         if (tlsMatch) siteData.tls = tlsMatch[1].trim();
 
         // Parse log block with proper brace matching
-        const logLineMatch = siteContent.match(/^\s*log\s*\{/m);
+        const logLineMatch = cleanedSiteContent.match(/^\s*log\s*\{/m);
         if (logLineMatch) {
-            const logOpenPos = siteContent.indexOf('{', siteContent.indexOf('log'));
+            const logOpenPos = cleanedSiteContent.indexOf('{', cleanedSiteContent.indexOf('log'));
             if (logOpenPos !== -1) {
-                const logClosePos = findMatchingBrace(siteContent, logOpenPos);
+                const logClosePos = findMatchingBrace(cleanedSiteContent, logOpenPos);
                 if (logClosePos !== -1) {
-                    const logBlockContent = siteContent.substring(logOpenPos + 1, logClosePos);
+                    const logBlockContent = cleanedSiteContent.substring(logOpenPos + 1, logClosePos);
                     const logOutputMatch = logBlockContent.match(/^\s*output\s+([^\s]+)/m);
                     if (logOutputMatch) siteData.log = logOutputMatch[1];
                 }
@@ -1118,26 +1142,22 @@ function parseCaddyfile(content) {
         }
 
         // Parse forward_auth with proper brace matching
-        // Skip geo-blocking forward_auth (localhost:5000 with /api/geoip/check)
-        const faLineMatch = siteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
+        // Geo-blocking forward_auth blocks have already been stripped above,
+        // so any remaining forward_auth is Authentik (or similar)
+        const faLineMatch = cleanedSiteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
         if (faLineMatch) {
             const faOutpostUrl = faLineMatch[1].trim();
-            const faOpenPos = siteContent.indexOf('{', siteContent.indexOf('forward_auth'));
+            const faOpenPos = cleanedSiteContent.indexOf('{', cleanedSiteContent.indexOf('forward_auth'));
             if (faOpenPos !== -1) {
-                const faClosePos = findMatchingBrace(siteContent, faOpenPos);
+                const faClosePos = findMatchingBrace(cleanedSiteContent, faOpenPos);
                 if (faClosePos !== -1) {
-                    const faBlockContent = siteContent.substring(faOpenPos + 1, faClosePos);
-                    // Skip if this is a geo-blocking forward_auth (managed by backend)
-                    if (faBlockContent.includes('/api/geoip/check')) {
-                        // This is a CaddyPanel geo-block directive, not Authentik — skip
-                    } else {
-                        siteData.forward_auth = {
-                            outpost_url: faOutpostUrl,
-                            uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
-                            copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
-                            trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
-                        };
-                    }
+                    const faBlockContent = cleanedSiteContent.substring(faOpenPos + 1, faClosePos);
+                    siteData.forward_auth = {
+                        outpost_url: faOutpostUrl,
+                        uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
+                        copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
+                        trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
+                    };
                 }
             }
         }
