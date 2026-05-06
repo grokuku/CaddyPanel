@@ -759,9 +759,9 @@ function generateCaddyfileBlock(site) {
         const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
         blockContent += `\treverse_proxy ${p}`;
         if (site.tls_skip_verify && p.startsWith('https://')) { 
-            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
+            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t\tflush_interval -1\n\t}\n`; 
         } else { 
-            blockContent += `\n`; 
+            blockContent += ` {\n\t\tflush_interval -1\n\t}\n`; 
         } 
     }
 
@@ -783,6 +783,12 @@ function generateCaddyfileBlock(site) {
     } else if (site.forward_auth) { 
         blockContent += `\n\t# --- Authentik Configuration (Enabled but Outpost URL missing or invalid) --- #\n`;
     }
+    
+    // Preserve geo-blocking directives injected by CaddyPanel backend (if any)
+    if (site.geoblock_directives) {
+        blockContent += '\n' + site.geoblock_directives + '\n';
+    }
+    
     return blockContent.trim();
 }
 
@@ -1057,6 +1063,12 @@ function parseCaddyfile(content) {
             continue;
         }
 
+        // Preserve geo-blocking injected blocks (forward_auth from CaddyPanel)
+        const geoBlockMatch = siteContent.match(/[\s\S]*?(# CADDYPANEL_GEOBLOCK[\s\S]*?# END_CADDYPANEL_GEOBLOCK)/);
+        if (geoBlockMatch) {
+            siteData.geoblock_directives = geoBlockMatch[1];
+        }
+
         // Standard parsing logic
         siteData.tls = 'auto';
         siteData.tls_skip_verify = false;
@@ -1106,19 +1118,26 @@ function parseCaddyfile(content) {
         }
 
         // Parse forward_auth with proper brace matching
+        // Skip geo-blocking forward_auth (localhost:5000 with /api/geoip/check)
         const faLineMatch = siteContent.match(/^\s*forward_auth\s+([^\s]+)\s*\{/m);
         if (faLineMatch) {
+            const faOutpostUrl = faLineMatch[1].trim();
             const faOpenPos = siteContent.indexOf('{', siteContent.indexOf('forward_auth'));
             if (faOpenPos !== -1) {
                 const faClosePos = findMatchingBrace(siteContent, faOpenPos);
                 if (faClosePos !== -1) {
                     const faBlockContent = siteContent.substring(faOpenPos + 1, faClosePos);
-                    siteData.forward_auth = {
-                        outpost_url: faLineMatch[1].trim(),
-                        uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
-                        copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
-                        trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
-                    };
+                    // Skip if this is a geo-blocking forward_auth (managed by backend)
+                    if (faBlockContent.includes('/api/geoip/check')) {
+                        // This is a CaddyPanel geo-block directive, not Authentik — skip
+                    } else {
+                        siteData.forward_auth = {
+                            outpost_url: faOutpostUrl,
+                            uri: (faBlockContent.match(/^\s*uri\s+([^\s]+)/m) || [])[1]?.trim(),
+                            copy_headers: (faBlockContent.match(/^\s*copy_headers\s+(.+)/m) || [])[1]?.trim(),
+                            trusted_proxies: (faBlockContent.match(/^\s*trusted_proxies\s+(.+)/m) || [])[1]?.trim()
+                        };
+                    }
                 }
             }
         }

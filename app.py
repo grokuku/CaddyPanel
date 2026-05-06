@@ -979,7 +979,8 @@ def _configure_caddyfile_geoblocking(content, enabled, flask_port):
         indent = indent_match.group(1) if indent_match else '\t'
         block_snippet = (
             f'\n{GEO_START}\n'
-            f'{indent}forward_auth localhost:{flask_port} {{\n'
+            f'{indent}@notWebSocket not header Connection *Upgrade*\n'
+            f'{indent}forward_auth @notWebSocket localhost:{flask_port} {{\n'
             f'{indent}\turi /api/geoip/check\n'
             f'{indent}}}\n'
             f'{GEO_END}'
