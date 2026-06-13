@@ -17,6 +17,7 @@
     <div style="text-align: right; margin-bottom: 10px;">
         Logged in as: <strong>{{ username }}</strong> | 
         <a href="{{ url_for('stats_page') }}">Global Stats</a> | 
+        <a href="#" id="change-password-link">Change Password</a> | 
         <a href="{{ url_for('logout') }}">Logout</a>
     </div>
     <h1>CaddyPanel</h1>
@@ -250,6 +251,32 @@
             }
         });
     </script>
+
+    <!-- Change Password Modal -->
+    <div id="change-password-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 450px;">
+            <span class="close-modal-btn" id="close-change-pwd-modal">×</span>
+            <h2>Change Password</h2>
+            <form id="change-password-form">
+                <div class="form-group">
+                    <label for="cp-current-password">Current Password:</label>
+                    <input type="password" id="cp-current-password" name="current_password" required>
+                </div>
+                <div class="form-group">
+                    <label for="cp-new-password">New Password:</label>
+                    <input type="password" id="cp-new-password" name="new_password" required minlength="8">
+                </div>
+                <div class="form-group">
+                    <label for="cp-confirm-password">Confirm New Password:</label>
+                    <input type="password" id="cp-confirm-password" name="confirm_password" required minlength="8">
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" id="cp-save-btn">Change Password</button>
+                    <button type="button" id="cp-cancel-btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <div style="text-align: center; margin-top: 20px; font-size: 0.8em; color: #888;">CaddyPanel v1.1.1-custom-config</div>
 

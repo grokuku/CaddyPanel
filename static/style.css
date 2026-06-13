@@ -254,8 +254,8 @@ button:hover, .action-btn:hover { background-color: var(--accent-hover); }
 .modal-content .modal-toggle-link:hover { text-decoration: underline; }
 .modal-actions { margin-top: 20px; text-align: right; }
 .modal-actions button { margin-left: 10px; }
-#modal-cancel-btn { background-color: var(--text-secondary); color: #fff; }
-#modal-cancel-btn:hover { background-color: var(--text-primary); }
+#modal-cancel-btn, #cp-cancel-btn { background-color: var(--text-secondary); color: #fff; }
+#modal-cancel-btn:hover, #cp-cancel-btn:hover { background-color: var(--text-primary); }
 
 .modal-toggle-buttons {
     margin-top: 15px;

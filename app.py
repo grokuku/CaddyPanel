@@ -207,6 +207,47 @@ def login():
         else: flash("Invalid username or password.", "danger")
     return render_template('login.html')
 
+@app.route('/api/change-password', methods=['POST'])
+@login_required
+def api_change_password():
+    """Change the password for the currently logged-in user."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"status": "error", "message": "Invalid JSON body."}), 400
+
+    current_password = data.get('current_password', '')
+    new_password = data.get('new_password', '')
+    confirm_password = data.get('confirm_password', '')
+
+    if not current_password or not new_password or not confirm_password:
+        return jsonify({"status": "error", "message": "All fields are required."}), 400
+
+    if new_password != confirm_password:
+        return jsonify({"status": "error", "message": "New passwords do not match."}), 400
+
+    if len(new_password) < 8:
+        return jsonify({"status": "error", "message": "New password must be at least 8 characters long."}), 400
+
+    users = load_users()
+    username = session.get('username')
+    user_data = users.get(username)
+
+    if not user_data:
+        return jsonify({"status": "error", "message": "User not found."}), 404
+
+    if not check_password_hash(user_data['password'], current_password):
+        return jsonify({"status": "error", "message": "Current password is incorrect."}), 403
+
+    # Update the password
+    user_data['password'] = generate_password_hash(new_password)
+    users[username] = user_data
+
+    if save_users(users):
+        return jsonify({"status": "success", "message": "Password changed successfully."})
+    else:
+        return jsonify({"status": "error", "message": "Failed to save password. Check server logs."}), 500
+
+
 @app.route('/logout')
 def logout():
     # ... (existing code for logout - unchanged)

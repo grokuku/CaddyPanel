@@ -1065,3 +1065,106 @@ async function handleImportCaddyfile(event) {
     };
     reader.readAsText(file);
 }
+
+
+// --- Change Password Functionality ---
+
+const changePasswordLink = document.getElementById('change-password-link');
+const changePasswordModal = document.getElementById('change-password-modal');
+const changePasswordForm = document.getElementById('change-password-form');
+const closeChangePwdModalBtn = document.getElementById('close-change-pwd-modal');
+const cpCancelBtn = document.getElementById('cp-cancel-btn');
+const cpSaveBtn = document.getElementById('cp-save-btn');
+
+function openChangePasswordModal() {
+    if (changePasswordModal) {
+        changePasswordForm.reset();
+        changePasswordModal.style.display = 'block';
+    }
+}
+
+function closeChangePasswordModal() {
+    if (changePasswordModal) {
+        changePasswordModal.style.display = 'none';
+        changePasswordForm.reset();
+    }
+}
+
+if (changePasswordLink) {
+    changePasswordLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openChangePasswordModal();
+    });
+}
+
+if (closeChangePwdModalBtn) {
+    closeChangePwdModalBtn.addEventListener('click', closeChangePasswordModal);
+}
+
+if (cpCancelBtn) {
+    cpCancelBtn.addEventListener('click', closeChangePasswordModal);
+}
+
+if (changePasswordModal) {
+    changePasswordModal.addEventListener('click', (event) => {
+        if (event.target === changePasswordModal) {
+            closeChangePasswordModal();
+        }
+    });
+}
+
+if (changePasswordForm) {
+    changePasswordForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const currentPassword = document.getElementById('cp-current-password').value;
+        const newPassword = document.getElementById('cp-new-password').value;
+        const confirmPassword = document.getElementById('cp-confirm-password').value;
+
+        // Client-side validation
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            showToast('All fields are required.', 'warning');
+            return;
+        }
+
+        if (newPassword.length < 8) {
+            showToast('New password must be at least 8 characters long.', 'warning');
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            showToast('New passwords do not match.', 'warning');
+            return;
+        }
+
+        cpSaveBtn.disabled = true;
+        cpSaveBtn.textContent = 'Changing...';
+
+        try {
+            const response = await fetch('/api/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_password: currentPassword,
+                    new_password: newPassword,
+                    confirm_password: confirmPassword
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.status === 'success') {
+                showToast(result.message, 'success');
+                closeChangePasswordModal();
+            } else {
+                showToast(result.message || 'Failed to change password.', 'error', 8000);
+            }
+        } catch (err) {
+            console.error('Error changing password:', err);
+            showToast('Network error: could not change password.', 'error', 8000);
+        } finally {
+            cpSaveBtn.disabled = false;
+            cpSaveBtn.textContent = 'Change Password';
+        }
+    });
+}
