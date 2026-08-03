@@ -1,5 +1,6 @@
-# C2RPM/.dockerignore (or rather at the root of the project, so .dockerignore)
-# This file must be at the root of the build context (the folder where you run docker build)
+# --- CaddyPanel .dockerignore ---
+# Root of the build context for `docker build .` (single-image project).
+# Patterns below are relative to this file's directory.
 
 # Git
 .git
@@ -7,6 +8,7 @@
 
 # Python
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -14,16 +16,26 @@ __pycache__/
 venv/
 .venv/
 env/
-.env # Do not include local .env files in the image
+.env          # Do not include local .env files in the image
 pip-wheel-metadata/
 pip-selfcheck.json
 
 # Docker
-Dockerfile # If you have test Dockerfiles or others
-docker-compose.yml # Same
+Dockerfile
+docker-compose.yml
 caddy_config_on_host/
 caddy_data_on_host/
 app_data_on_host/
+
+# SQLite dev database — never embed it in the image.
+# stats.db is created at runtime in the /app_data volume by
+# stats_aggregator.init_stats_db() (see app.py), so no seed DB is needed.
+stats.db
+*.db
+
+# Tests — not needed in the production image
+tests/
+conftest.py
 
 # IDE / OS specific
 .vscode/
@@ -34,27 +46,5 @@ app_data_on_host/
 .DS_Store
 Thumbs.db
 
-# Unnecessary documentation in the image (if plan.md is in C2RPM)
-# If plan.md is at the root of the project, and C2RPM is a sub-folder,
-# and the build context is the root, then C2RPM/plan.md will be copied
-# by COPY C2RPM/ ./ in /app. If we do not want plan.md in the image:
-# C2RPM/plan.md
-# However, the plan.md provided in the initial list is in C2RPM/plan.md
-# and the Dockerfile is at the root, so it will be copied under C2RPM/plan.md IN the image.
-# To exclude it:
-C2RPM/plan.md
-
-
-# Example data files that are copied by the entrypoint from the image
-# but that we may not want directly in the WORKDIR if others
-# copies are more specific. Currently, they are needed in /app
-# for entrypoint.sh to work (eg: DEFAULT_PREFS_PATH="${FLASK_APP_DIR}/preferences.json")
-# So do not ignore them here if the copy strategy remains the same.
-# C2RPM/preferences.json
-# C2RPM/users.json
-# C2RPM/caddyfile/Caddyfile
-
-# If you have tests that you do not want in the production image
-# tests/
-
+# Documentation
 GEMINI.md

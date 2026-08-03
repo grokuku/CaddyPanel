@@ -48,6 +48,52 @@ def _is_within_directory(path, base):
     except ValueError:
         return False
 
+# --- App version (source of truth: version.txt at the project root) ---
+# version.txt is used by the GitHub release workflows and lives next to app.py:
+# in dev at the repo root, and in the Docker image at /app/version.txt (the
+# Dockerfile does `COPY . .` and the working dir is /app). Resolving relative to
+# __file__ is therefore the most robust single lookup; we also fall back to the
+# CWD-relative path (which equals the same file when the app is launched from
+# the project root or from /app in production).
+VERSION_FILE = Path(__file__).resolve().parent / 'version.txt'
+
+# Simple module-level cache. We stat the file on every call (a stat() is cheap
+# and opens no file handle) and only re-read it when the mtime or size changed,
+# so version.txt is not re-read on every request while edits are still picked
+# up without a restart (useful in dev).
+_VERSION_CACHE = {'mtime_ns': None, 'size': None, 'value': None}
+
+
+def get_app_version():
+    """Return the application version read from version.txt (source of truth).
+
+    Reads <project_root>/version.txt (next to app.py), trimming whitespace, and
+    falls back to the CWD-relative 'version.txt' (the Docker working dir /app)
+    if the file is not next to app.py. The value is cached per process and
+    invalidated when the file's mtime or size changes.
+
+    Returns 'dev' when the file is missing, unreadable, or empty — a clear,
+    unambiguous fallback meaning "not a tagged release build".
+    """
+    for candidate in (VERSION_FILE, Path('version.txt')):
+        try:
+            stat = candidate.stat()
+        except OSError:
+            continue
+        if (_VERSION_CACHE['mtime_ns'] == stat.st_mtime_ns
+                and _VERSION_CACHE['size'] == stat.st_size):
+            return _VERSION_CACHE['value']
+        try:
+            value = candidate.read_text(encoding='utf-8').strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if value:
+            _VERSION_CACHE['mtime_ns'] = stat.st_mtime_ns
+            _VERSION_CACHE['size'] = stat.st_size
+            _VERSION_CACHE['value'] = value
+            return value
+    return 'dev'
+
 DEFAULT_PREFERENCES = {
     "theme": "theme-light-gray",
     "caddyfilePath": str(CADDY_CONFIG_FILE), 
@@ -285,7 +331,9 @@ def index():
         else: error_message = f"Error: Configured Caddyfile path '{caddyfile_to_load}' is not a file."
     else: error_message = f"Warning: Caddyfile at '{caddyfile_to_load}' not found."
     if error_message and not initial_caddyfile_content: flash(error_message, "danger" if "Error:" in error_message else "info")
-    return render_template('index.html', username=session.get('username'), initial_caddyfile_content=initial_caddyfile_content)
+    return render_template('index.html', username=session.get('username'),
+                           initial_caddyfile_content=initial_caddyfile_content,
+                           version=get_app_version())
 
 @app.route('/setup', methods=['GET', 'POST'])
 @admin_setup_required
@@ -803,7 +851,8 @@ def reload_caddy_config():
 @app.route('/stats')
 @login_required
 def stats_page():
-    return render_template('stats.html', username=session.get('username'))
+    return render_template('stats.html', username=session.get('username'),
+                           version=get_app_version())
 
 @app.route('/api/stats')
 @login_required

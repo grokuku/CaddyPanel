@@ -52,6 +52,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 # --- Stage 3: Final Application ---
 FROM python:3.10-slim-bullseye
 
+# Build-time metadata for OCI labels. ARG must be declared in THIS stage
+# before the LABEL that references them (ARGs do not cross stages).
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+# OpenContainer Image Spec labels (version / commit injected via build-args)
+LABEL org.opencontainers.image.title="CaddyPanel" \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.revision=$GIT_COMMIT \
+      org.opencontainers.image.source=https://github.com/grokuku/CaddyPanel
+
 # Arguments for user and group creation
 ARG APP_USER_ID=1000
 ARG APP_GROUP_ID=1000
