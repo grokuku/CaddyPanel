@@ -35,6 +35,13 @@ services:
       # You can generate one with: openssl rand -hex 32
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
       
+      # Session cookie security: CaddyPanel sets the Secure flag on the
+      # session cookie by default (requires HTTPS). If you access the panel
+      # directly over plain HTTP (http://<your_server_ip>:5000) without a
+      # TLS-terminating reverse proxy (Caddy) in front, uncomment the line
+      # below so the session cookie is sent over HTTP:
+      # - FLASK_COOKIE_SECURE=0
+      
       # Path where Caddy will write JSON access logs (used by the Stats page).
       # This must match the supervisord stdout_logfile path.
       - CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log

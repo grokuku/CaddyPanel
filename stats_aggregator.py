@@ -23,7 +23,10 @@ import time as time_module
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+import logging
 import re as _re
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_ts(ts_value):
@@ -59,9 +62,9 @@ def configure_geoip(db_path):
         try:
             import geoip2.database
             _geoip_reader = geoip2.database.Reader(db_path)
-            print(f"GeoIP: loaded database from {db_path}")
+            logger.info(f"GeoIP: loaded database from {db_path}")
         except Exception as e:
-            print(f"GeoIP: could not load database from {db_path}: {e}")
+            logger.error(f"GeoIP: could not load database from {db_path}: {e}")
 
 
 def _resolve_country(ip_str):
@@ -144,6 +147,14 @@ def init_stats_db(db_path):
             value TEXT
         );
 
+        -- Shared login-failure counter (per client IP). Lives in the same DB
+        -- so all gunicorn workers enforce the same rate limit.
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            ip TEXT PRIMARY KEY,
+            attempts TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly_stats(bucket_hour);
         CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_stats(bucket_date);
     """)
@@ -155,9 +166,9 @@ def init_stats_db(db_path):
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
             if 'top_countries' not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN top_countries TEXT DEFAULT '{{}}'")
-                print(f"Stats DB migration: added top_countries to {table}")
+                logger.info(f"Stats DB migration: added top_countries to {table}")
         except Exception as e:
-            print(f"Stats DB migration check for {table}: {e}")
+            logger.error(f"Stats DB migration check for {table}: {e}")
 
     conn.close()
 
@@ -167,6 +178,112 @@ def _get_conn(timeout=10):
     if _db_path is None:
         raise RuntimeError("Stats DB not initialized. Call init_stats_db() first.")
     return sqlite3.connect(_db_path, timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Login attempt tracking (shared across gunicorn workers via SQLite)
+# ---------------------------------------------------------------------------
+# Keeps a sliding-window counter of failed login attempts per client IP in the
+# shared stats database so all workers enforce the same limit (fixes the
+# per-process in-memory counter that let an attacker get N workers * 5 tries).
+# Each function returns None/False when the database is unavailable so callers
+# can transparently fall back to an in-memory counter.
+
+_LOGIN_WINDOW_SECONDS = 300  # 5 minutes
+
+
+def _login_attempts_from_row(row_value):
+    """Parse a stored JSON list of failure timestamps, ignoring bad values."""
+    if not row_value:
+        return []
+    try:
+        attempts = json.loads(row_value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [t for t in attempts if isinstance(t, (int, float))]
+
+
+def login_attempts_count(ip, now=None):
+    """Return the number of recent failed login attempts for an IP within the
+    sliding window. Fully-expired rows are pruned to keep the table small.
+    Returns None if the database is unavailable (callers fall back)."""
+    if _db_path is None:
+        return None
+    try:
+        ts = now if now is not None else time_module.time()
+        cutoff = ts - _LOGIN_WINDOW_SECONDS
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT attempts FROM login_attempts WHERE ip = ?", (ip,)
+            ).fetchone()
+            if row is None:
+                return 0
+            attempts = _login_attempts_from_row(row[0])
+            fresh = [t for t in attempts if t > cutoff]
+            if not fresh:
+                # All attempts expired: delete the row to keep the table small.
+                conn.execute("DELETE FROM login_attempts WHERE ip = ?", (ip,))
+                conn.commit()
+                return 0
+            return len(fresh)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"login_attempts_count failed for {ip}: {e}")
+        return None
+
+
+def login_attempts_add(ip, now=None):
+    """Record a failed login attempt for an IP and prune fully-expired rows.
+    Returns True on success, False if the database is unavailable."""
+    if _db_path is None:
+        return False
+    try:
+        ts = now if now is not None else time_module.time()
+        cutoff = ts - _LOGIN_WINDOW_SECONDS
+        conn = _get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT attempts FROM login_attempts WHERE ip = ?", (ip,)
+            ).fetchone()
+            attempts = _login_attempts_from_row(row[0] if row else None)
+            attempts = [t for t in attempts if t > cutoff]
+            attempts.append(ts)
+            conn.execute(
+                "INSERT OR REPLACE INTO login_attempts (ip, attempts, updated_at) VALUES (?, ?, ?)",
+                (ip, json.dumps(attempts), ts),
+            )
+            # Bounded cleanup: drop any row whose entries have fully expired.
+            conn.execute(
+                "DELETE FROM login_attempts WHERE updated_at <= ?", (cutoff,)
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"login_attempts_add failed for {ip}: {e}")
+        return False
+
+
+def login_attempts_clear(ip):
+    """Remove all recorded login attempts for an IP (after a successful login).
+    Returns True on success, False if the database is unavailable."""
+    if _db_path is None:
+        return False
+    try:
+        conn = _get_conn()
+        try:
+            conn.execute("DELETE FROM login_attempts WHERE ip = ?", (ip,))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"login_attempts_clear failed for {ip}: {e}")
+        return False
 
 
 def _top_n_from_dict(d, n):
@@ -236,24 +353,43 @@ def process_new_logs(log_file_path):
         except (ValueError, TypeError):
             pass
 
-    # Detect log rotation (file got smaller than our last offset)
-    if current_size < last_offset:
-        last_offset = 0
-        last_ts = 0.0
-
-    if current_size <= last_offset:
-        conn.execute("ROLLBACK")
-        conn.close()
-        return 0
-
     # Read new log entries
     new_entries = []
     max_ts = last_ts
     new_offset = last_offset
     is_first_run = (last_offset == 0 and last_ts == 0.0)
 
+    # Detect log rotation (file got smaller than our last offset)
+    if current_size < last_offset:
+        # Check for rotated log file (supervisord appends .1)
+        rotated_path = Path(str(log_path) + '.1')
+        if rotated_path.exists():
+            try:
+                with open(rotated_path, 'r', encoding='utf-8', errors='replace') as rf:
+                    rf.seek(last_offset)
+                    for line in rf:
+                        line = line.strip()
+                        if not line: continue
+                        try:
+                            entry = json.loads(line)
+                            ts = _parse_ts(entry.get('ts', 0))
+                            if ts > 0:
+                                entry['_ts_epoch'] = ts
+                                new_entries.append(entry)
+                                max_ts = max(max_ts, ts)
+                        except (json.JSONDecodeError, ValueError): continue
+            except IOError as e:
+                logger.error(f"Error reading rotated log file {rotated_path}: {e}")
+        last_offset = 0
+        last_ts = 0.0
+
+    if current_size <= last_offset and not new_entries:
+        conn.execute("ROLLBACK")
+        conn.close()
+        return 0
+
     try:
-        with open(log_path, 'r', encoding='utf-8') as f:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
             if is_first_run:
                 # First run: seek near end of file to avoid reading huge history
                 if current_size > MAX_INITIAL_BYTES:
@@ -293,7 +429,7 @@ def process_new_logs(log_file_path):
                         continue
                 new_offset = f.tell()
     except IOError as e:
-        print(f"Error reading log file {log_path}: {e}")
+        logger.error(f"Error reading log file {log_path}: {e}")
         conn.execute("ROLLBACK")
         conn.close()
         return 0
@@ -450,7 +586,7 @@ def process_new_logs(log_file_path):
     conn.commit()
     conn.close()
 
-    print(f"Stats: processed {len(new_entries)} new log entries.")
+    logger.info(f"Stats: processed {len(new_entries)} new log entries.")
     return len(new_entries)
 
 
@@ -580,7 +716,7 @@ def rollup_old_buckets():
             "DELETE FROM hourly_stats WHERE substr(bucket_hour, 1, 10) < ?",
             (cutoff_date,),
         )
-        print(f"Stats: rolled up hourly data before {cutoff_date} into daily_stats.")
+        logger.info(f"Stats: rolled up hourly data before {cutoff_date} into daily_stats.")
 
     # 2. Delete old daily data
     daily_cutoff = (now - timedelta(days=DAILY_RETENTION_DAYS)).strftime('%Y-%m-%d')
@@ -588,7 +724,7 @@ def rollup_old_buckets():
         "DELETE FROM daily_stats WHERE bucket_date < ?", (daily_cutoff,)
     ).rowcount
     if deleted:
-        print(f"Stats: pruned {deleted} daily_stats rows before {daily_cutoff}.")
+        logger.info(f"Stats: pruned {deleted} daily_stats rows before {daily_cutoff}.")
 
     # Update last_rollup_ts
     conn.execute(
@@ -745,7 +881,7 @@ def get_stats(period='7d', host=None):
             timeseries_key_type = 'daily'
 
     except Exception as e:
-        print(f"Error querying stats for period={period}, host={host}: {e}")
+        logger.error(f"Error querying stats for period={period}, host={host}: {e}")
         conn.close()
         return _empty_stats(period, host)
 

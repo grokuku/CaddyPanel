@@ -73,7 +73,7 @@ const geoipStatusText = document.getElementById('geoip-status-text');
 // --- Global State ---
 let currentPreferences = {};
 let siteConfigs = [];
-let isAutoSaving = false;
+let _saveChain = Promise.resolve();
 
 // --- Toast Notification System ---
 function showToast(message, type = 'info', duration = 3000) {
@@ -110,6 +110,11 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 
+// --- CSRF Token Helper ---
+function getCsrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
 // --- Event Listeners ---
 if (themeSelect) {
     themeSelect.addEventListener('change', () => applyTheme(themeSelect.value));
@@ -129,7 +134,7 @@ if (savePrefsBtn) {
             downloadGeoipBtn.textContent = 'Downloading...';
             if (geoipStatusText) geoipStatusText.textContent = 'Downloading GeoIP database...';
             try {
-                const res = await fetch('/api/geoip/download', { method: 'POST' });
+                const res = await fetch('/api/geoip/download', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
                 const result = await res.json();
                 if (result.status === 'success') {
                     showToast(result.message, 'success');
@@ -169,7 +174,7 @@ if (savePrefsBtn) {
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                const res = await fetch('/api/geoip/upload', { method: 'POST', body: formData });
+                const res = await fetch('/api/geoip/upload', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() }, body: formData });
                 const result = await res.json();
                 if (result.status === 'success') {
                     showToast(result.message, 'success');
@@ -195,7 +200,7 @@ if (savePrefsBtn) {
             testGeoipBtn.disabled = true; testGeoipBtn.textContent = 'Testing...';
             if (geoipStatusText) geoipStatusText.textContent = 'Testing credentials...';
             try {
-                const res = await fetch('/api/geoip/test', { method: 'POST' });
+                const res = await fetch('/api/geoip/test', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
                 const result = await res.json();
                 if (result.status === 'success') {
                     showToast(result.message, 'success');
@@ -570,15 +575,13 @@ async function saveSiteFromModal() {
     const isCustomMode = modalCustomConfigDiv.style.display !== 'none';
 
     if (isCustomMode) {
+        const customContent = modalCustomContentTextarea.value.trim();
+        if (!customContent) { showToast("Custom configuration content cannot be empty.", "warning"); return; }
         siteData.is_custom = true;
-        siteData.custom_content = modalCustomContentTextarea.value.trim();
+        siteData.custom_content = customContent;
     } else {
         const standardData = collectStandardModalData();
         siteData = { ...siteData, ...standardData, is_custom: false, custom_content: null };
-        if (siteData.is_custom && !siteData.custom_content.trim()) {
-            showToast("Custom configuration content cannot be empty.", "warning");
-            return;
-        }
         if (siteData.forward_auth && !siteData.forward_auth.outpost_url) {
             showToast("Authentik Outpost URL is required if Authentik is enabled.", "warning");
             return;
@@ -706,31 +709,39 @@ function generateCaddyfileFromData() {
 
 // --- Auto Save Caddyfile to Server and Reload Caddy ---
 async function autoSaveAndReloadCaddy() {
-    if (isAutoSaving) { return; }
-    if (!outputTextarea) { return; }
-    isAutoSaving = true;
-    const caddyfileContent = outputTextarea.value;
-    showToast("Auto-saving Caddyfile...", "info", 10000);
-    try {
-        const saveResponse = await fetch('/api/caddyfile/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: caddyfileContent }) });
-        const saveData = await saveResponse.json();
-        if (!saveResponse.ok || saveData.status !== 'success') { throw new Error(saveData.message || `Failed to save Caddyfile (HTTP ${saveResponse.status})`); }
-        
-        showToast(`Caddyfile saved. Reloading Caddy...`, "info", 10000);
-        const reloadResponse = await fetch('/api/caddy/reload', { method: 'POST' });
-        const reloadData = await reloadResponse.json();
-        if (!reloadResponse.ok || reloadData.status !== 'success') { 
-            let errorMsg = reloadData.message || `Failed to reload Caddy (HTTP ${reloadResponse.status})`; 
-            if (reloadData.details) errorMsg += ` Details: ${reloadData.details}`; 
-            throw new Error(errorMsg); 
+    if (!outputTextarea) return;
+    const run = async () => {
+        const caddyfileContent = outputTextarea.value;
+        showToast("Auto-saving Caddyfile...", "info", 10000);
+        try {
+            const saveResponse = await fetch('/api/caddyfile/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+                body: JSON.stringify({ content: caddyfileContent })
+            });
+            const saveData = await saveResponse.json();
+            if (!saveResponse.ok || saveData.status !== 'success') {
+                throw new Error(saveData.message || `Failed to save Caddyfile (HTTP ${saveData.status})`);
+            }
+            showToast(`Caddyfile saved. Reloading Caddy...`, "info", 10000);
+            const reloadResponse = await fetch('/api/caddy/reload', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCsrfToken() }
+            });
+            const reloadData = await reloadResponse.json();
+            if (!reloadResponse.ok || reloadData.status !== 'success') {
+                let errorMsg = reloadData.message || `Failed to reload Caddy (HTTP ${reloadResponse.status})`;
+                if (reloadData.details) errorMsg += ` Details: ${reloadData.details}`;
+                throw new Error(errorMsg);
+            }
+            showToast(`Caddyfile auto-saved and Caddy reloaded!`, "success", 7000);
+        } catch (error) {
+            console.error('Error during auto save/reload Caddyfile:', error);
+            showToast(`Error: ${error.message}`, "danger", 10000);
         }
-        showToast(`Caddyfile auto-saved and Caddy reloaded!`, "success", 7000);
-    } catch (error) {
-        console.error('Error during auto save/reload Caddyfile:', error);
-        showToast(`Error: ${error.message}`, "danger", 10000);
-    } finally {
-        isAutoSaving = false;
-    }
+    };
+    _saveChain = _saveChain.then(run, run);
+    return _saveChain;
 }
 
 // --- Preferences ---
@@ -759,12 +770,11 @@ async function savePreferences() {
     };
     
     if (currentPreferences.caddyfilePath) prefsToSave.caddyfilePath = currentPreferences.caddyfilePath;
-    if (currentPreferences.caddyReloadCmd) prefsToSave.caddyReloadCmd = currentPreferences.caddyReloadCmd;
     
     try {
         const response = await fetch('/api/preferences', { 
             method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() }, 
             body: JSON.stringify(prefsToSave) 
         });
         const result = await response.json();
@@ -835,6 +845,8 @@ async function loadPreferences() {
 }
 
 // --- Caddyfile Brace Matching Helper ---
+// NOTE: This brace-matching logic is duplicated in caddyfile_parser.py (Python)
+// for server-side use. Changes here should be mirrored there if applicable.
 function findMatchingBrace(content, openBraceIndex) {
     // Find the position of the closing brace that matches the opening brace at openBraceIndex.
     // Handles nested braces, quoted strings, and comments.
@@ -886,13 +898,20 @@ function parseCaddyfile(content) {
     // Determine starting position for site blocks (skip global block)
     let pos = (globalCloseIndex !== -1) ? globalCloseIndex + 1 : 0;
 
+    // knownDirectives: Caddy v2 directives that use a nested block form `{ ... }` inside a
+    // site block (or at the top level). They must not be mistaken for site blocks themselves.
+    // IMPORTANT KNOWN LIMITATION (documented, not refactored): Caddyfile snippets
+    // `(name) { ... }` are NOT specially recognized here. A snippet's name `(name)` is not a
+    // known directive, so `(name) { ... }` is currently treated as a site block by this parser.
     const knownDirectives = new Set(['log', 'tls', 'forward_auth', 'try_files', 'handle', 'route',
         'request_header', 'response_header', 'handle_errors', 'encode', 'redir', 'rewrite',
         'uri', 'vars', 'import', 'acme_dns', 'auto_https', 'on_demand_tls', 'local_certs', 'skip_log',
-        'basicauth', 'jwt', 'oidc', 'ip_match', 'remote_ip', 'client_ip', 'method', 'path',
+        'basicauth', 'basic_auth', 'jwt', 'oidc', 'ip_match', 'remote_ip', 'client_ip', 'method', 'path',
         'path_regexp', 'query', 'expression', 'not', 'abort', 'error', 'respond', 'reverse_proxy',
         'php_fastcgi', 'file_server', 'root', 'templates', 'markdown', 'push', 'metrics', 'pprof',
-        'health_check', 'header']);
+        'health_check', 'header',
+        // Block-form Caddy v2 directives that were missing (see Caddy docs directives list)
+        'map', 'request_body', 'acme_server', 'handle_path', 'tracing']);
 
     while (pos < content.length) {
         // Find next opening brace
@@ -1143,7 +1162,7 @@ if (changePasswordForm) {
         try {
             const response = await fetch('/api/change-password', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
                 body: JSON.stringify({
                     current_password: currentPassword,
                     new_password: newPassword,
@@ -1156,6 +1175,9 @@ if (changePasswordForm) {
             if (response.ok && result.status === 'success') {
                 showToast(result.message, 'success');
                 closeChangePasswordModal();
+                // Server-side session.clear() invalidates the current CSRF token.
+                // Reload the page so the browser picks up the fresh token rendered by the server.
+                setTimeout(() => window.location.reload(), 1500);
             } else {
                 showToast(result.message || 'Failed to change password.', 'error', 8000);
             }

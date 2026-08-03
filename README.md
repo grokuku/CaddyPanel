@@ -69,6 +69,11 @@ services:
       # You can generate one with: openssl rand -hex 32
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
       
+      # Session cookie security: the Secure flag is ON by default (HTTPS).
+      # If you access the panel over plain HTTP (http://<ip>:5000) without a
+      # TLS-terminating reverse proxy, set FLASK_COOKIE_SECURE=0:
+      # - FLASK_COOKIE_SECURE=0
+      
       # Timezone for Caddy and application logs to be accurate.
       # List of timezones: https://en.wikipedia.org/wiki/List_of_zz_database_time_zones
       - TZ=Etc/UTC
@@ -111,6 +116,45 @@ The container will now start in the background.
 3.  **The first user to register automatically becomes the administrator.**
 4.  Log in with your new credentials, and you can start configuring Caddy!
 
+## Security & Environment Variables
+
+### Session cookie (`FLASK_COOKIE_SECURE`)
+
+By default, CaddyPanel sets the `Secure` flag on the session cookie (it is only
+sent over HTTPS). This is the recommended setting when the panel is served
+behind Caddy with TLS, or through any TLS-terminating reverse proxy.
+
+> [!IMPORTANT]
+> If you access the panel **directly over plain HTTP** (e.g.
+> `http://<your_server_ip>:5000` without a reverse proxy in front), the
+> session cookie will **not** be sent and login will silently fail. In that
+> case, set the environment variable `FLASK_COOKIE_SECURE=0` to allow the
+> cookie over HTTP:
+>
+> ```sh
+> # docker-compose.yml
+> environment:
+>   - FLASK_COOKIE_SECURE=0
+> ```
+>
+> ```sh
+> # docker run / plain gunicorn
+> FLASK_COOKIE_SECURE=0 gunicorn --workers 4 app:app
+> ```
+>
+> Once you serve the panel through HTTPS (Caddy manages a domain), remove this
+> variable (or set it back to `1`) so the cookie is `Secure` again.
+
+### Debug mode (`FLASK_DEBUG`)
+
+When the Flask dev server is started directly (`python app.py`), debug mode is
+**off** by default. To enable it for development, set `FLASK_DEBUG=1`:
+
+```sh
+FLASK_DEBUG=1 python app.py
+```
+
+Debug mode is never used by the production (gunicorn) entrypoint.
 
 ## Volumes Explained
 

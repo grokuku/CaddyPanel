@@ -83,6 +83,9 @@ RUN groupadd --gid ${APP_GROUP_ID} appgroup && \
 # Copy Caddy binary from the builder stage
 COPY --from=caddy_builder /usr/local/bin/caddy /usr/bin/caddy
 
+# Allow Caddy to bind ports < 1024 without root (capability)
+RUN setcap cap_net_bind_service=+ep /usr/bin/caddy
+
 # Copy geoipupdate binary from the geoip builder stage
 COPY --from=geoip_builder /usr/local/bin/geoipupdate /usr/local/bin/geoipupdate
 

@@ -1,0 +1,5 @@
+# Development / test dependencies only — do not add these to requirements.txt
+# (production runtime image installs requirements.txt only).
+#
+# pytest 8.x supports Python >=3.8, so it is fine on the project's Python 3.10.
+pytest==8.3.5

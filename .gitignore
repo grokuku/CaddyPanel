@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+users.json
+preferences.json
+stats.db
+*.mmdb
+GeoIP.conf
+caddy_config/
+caddy_data/
+app_data/
+caddy_logs/
+*.old
+.vscode/
+.idea/

@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Statistics - CaddyPanel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
     <style>
         /* Stats page inherits CSS variables from style.css */
         html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
@@ -305,6 +306,20 @@
     <div class="map-tooltip" id="map-tooltip"></div>
 
     <script>
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getCsrfToken() {
+            return document.querySelector('meta[name="csrf-token"]')?.content || '';
+        }
+
         let currentPeriod = '7d';
         let currentHost = null;
         const urlParams = new URLSearchParams(window.location.search);
@@ -409,7 +424,8 @@
                     let label, value;
                     if (Array.isArray(item)) { label = item[0]; value = item[1]; }
                     else { label = item.path || item.agent || 'Unknown'; value = item.count; }
-                    li.innerHTML = `<span class="label" title="${label}">${label}</span> <span class="value">${value.toLocaleString()}</span>`;
+                    const safeLabel = escapeHtml(label);
+                    li.innerHTML = `<span class="label" title="${safeLabel}">${safeLabel}</span> <span class="value">${value.toLocaleString()}</span>`;
                     ul.appendChild(li);
                 });
             } else {
@@ -435,7 +451,7 @@
                 }
                 const item = document.createElement('span');
                 item.className = 'status-legend-item';
-                item.innerHTML = `<span class="status-dot status-${code}"></span>${code}: ${count.toLocaleString()} (${pct.toFixed(1)}%)`;
+                item.innerHTML = `<span class="status-dot status-${escapeHtml(code)}"></span>${escapeHtml(code)}: ${count.toLocaleString()} (${pct.toFixed(1)}%)`;
                 legend.appendChild(item);
             });
         }
@@ -454,7 +470,7 @@
                 li.innerHTML = `
                     <span class="country-label">
                         <span class="country-flag">${countryFlag(c.country)}</span>
-                        ${countryName(c.country)}
+                        ${escapeHtml(countryName(c.country))}
                     </span>
                     <span style="display:flex;align-items:center;">
                         <span class="country-value">${c.count.toLocaleString()}</span>
@@ -473,7 +489,7 @@
                 return;
             }
             try {
-                const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+                const world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json');
                 const countries = topojson.feature(world, world.objects.countries);
                 const borders = topojson.mesh(world, world.objects.countries, (a, b) => a !== b);
 
@@ -637,7 +653,7 @@
                 const stats = await res.json();
 
                 if (stats.log_read_error) {
-                    logMsg.innerHTML = `<strong>Warning:</strong> ${stats.log_read_error}`;
+                    logMsg.innerHTML = `<strong>Warning:</strong> ${escapeHtml(stats.log_read_error)}`;
                     logArea.style.display = 'block';
                     loadingEl.style.display = 'none';
                 } else {
@@ -691,7 +707,7 @@
                     showToast('Configuring Caddyfile for logging...', 'info', 10000);
                     cfgBtn.disabled = true; cfgBtn.textContent = 'Configuring...';
                     try {
-                        const res = await fetch("{{ url_for('configure_caddyfile_logging') }}", { method: 'POST' });
+                        const res = await fetch("{{ url_for('configure_caddyfile_logging') }}", { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
                         const result = await res.json();
                         if (result.status === 'success') {
                             showToast(result.message, 'success', 7000);

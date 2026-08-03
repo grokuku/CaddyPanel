@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>CaddyPanel - Caddy 2 Control Panel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script id="initial-data" type="application/json">
@@ -278,7 +279,7 @@
         </div>
     </div>
 
-    <div style="text-align: center; margin-top: 20px; font-size: 0.8em; color: #888;">CaddyPanel v1.1.1-custom-config</div>
+    <div style="text-align: center; margin-top: 20px; font-size: 0.8em; color: #888;">CaddyPanel v1.6-security</div>
 
 </body>
 </html>
