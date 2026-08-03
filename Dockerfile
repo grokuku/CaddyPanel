@@ -84,6 +84,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         supervisor \
         curl \
+        libcap2-bin \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
