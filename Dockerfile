@@ -71,6 +71,11 @@ ARG APP_GROUP_ID=1000
 ENV CADDY_CONFIG_DIR=/etc/caddy
 ENV CADDY_CONFIG_FILE=${CADDY_CONFIG_DIR}/Caddyfile
 ENV CADDY_DATA_DIR=/data/caddy
+# Make Caddy store its data (certificates, ocsp, autosave) in /data/caddy
+# (the persisted volume) regardless of which user it runs as. Without this,
+# Caddy defaults to $HOME/.local/share/caddy -> /root/... when supervisord
+# switches to appuser but keeps HOME=/root (permission denied).
+ENV XDG_DATA_HOME=/data
 ENV CADDY_ACCESS_LOG_FILE=/var/log/caddy_panel/caddy_access.json.log
 ENV APP_DATA_DIR=/app_data
 ENV FLASK_APP_DIR=/app
