@@ -15,7 +15,9 @@ import pytest
 from caddyfile_parser import (
     add_log_to_site_blocks,
     configure_caddyfile_logging,
+    ensure_global_servers_options,
     find_matching_brace,
+    harden_reverse_proxy_in_site,
     remove_directive_block,
 )
 
@@ -562,3 +564,219 @@ def test_configure_logging_writes_file_and_returns_success(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert "log {" in text
     assert "example.com {\n    log" in text
+
+
+# ---------------------------------------------------------------------------
+# ensure_global_servers_options
+# ---------------------------------------------------------------------------
+
+def test_ensure_global_servers_options_creates_block_when_absent():
+    content = "example.com {\n    root * /var/www\n}\n"
+    new_content, status = ensure_global_servers_options(content, "10m", "30s")
+    assert status == "created"
+    assert new_content.startswith("{\n\tservers {\n\t\ttimeouts {\n\t\t\tidle 10m\n")
+    assert "\t\tkeepalive_interval 30s\n" in new_content
+    assert new_content.endswith("}\n}\n\nexample.com {\n    root * /var/www\n}\n")
+    # Site block untouched
+    assert "example.com {\n    root * /var/www\n}\n" in new_content
+
+
+def test_ensure_global_servers_options_merges_into_existing_global_block():
+    content = (
+        "{\n"
+        "\tlog {\n"
+        "\t\toutput stdout\n"
+        "\t}\n"
+        "}\n"
+        "\n"
+        "example.com {\n"
+        "}\n"
+    )
+    new_content, status = ensure_global_servers_options(content, "15m", "45s")
+    assert status == "updated"
+    assert "log {" in new_content and "output stdout" in new_content
+    assert "\tservers {\n" in new_content
+    assert "\t\ttimeouts {\n\t\t\tidle 15m\n\t\t}\n" in new_content
+    assert "\t\tkeepalive_interval 45s\n" in new_content
+    # Still a single well-formed structure: global{log{}, servers{timeouts{}},
+    # and the site block.
+    assert new_content.count("{") == 5
+
+
+def test_ensure_global_servers_options_merges_partial_config():
+    # idle already present with the requested value, keepalive_interval missing:
+    # only the missing option is added.
+    content = (
+        "{\n"
+        "\tservers {\n"
+        "\t\ttimeouts {\n"
+        "\t\t\tidle 10m\n"
+        "\t\t}\n"
+        "\t}\n"
+        "}\n"
+    )
+    new_content, status = ensure_global_servers_options(content, "10m", "30s")
+    assert status == "updated"
+    assert "\t\t\tidle 10m\n" in new_content          # untouched
+    assert new_content.count("idle 10m") == 1         # not duplicated
+    assert "\t\tkeepalive_interval 30s\n" in new_content
+
+
+def test_ensure_global_servers_options_is_idempotent():
+    content = "example.com {\n}\n"
+    once, status1 = ensure_global_servers_options(content, "10m", "30s")
+    assert status1 == "created"
+    twice, status2 = ensure_global_servers_options(once, "10m", "30s")
+    assert status2 == "unchanged"
+    assert twice == once
+    # Idempotence on the merge path as well (call twice after partial config).
+    partial = "{\n\tservers {\n\t\tkeepalive_interval 30s\n\t}\n}\n"
+    merged, status3 = ensure_global_servers_options(partial, "10m", "30s")
+    assert status3 == "updated"
+    remarried, status4 = ensure_global_servers_options(merged, "10m", "30s")
+    assert status4 == "unchanged"
+    assert remarried == merged
+
+
+def test_ensure_global_servers_options_conflict_does_not_overwrite():
+    content = (
+        "{\n"
+        "\tservers {\n"
+        "\t\ttimeouts {\n"
+        "\t\t\tidle 2h\n"
+        "\t\t}\n"
+        "\t\tkeepalive_interval 30s\n"
+        "\t}\n"
+        "}\n"
+    )
+    new_content, status = ensure_global_servers_options(content, "10m", "30s")
+    assert status == "conflict"
+    assert new_content == content  # existing values never overwritten
+    assert "idle 2h" in new_content
+
+
+# ---------------------------------------------------------------------------
+# harden_reverse_proxy_in_site
+# ---------------------------------------------------------------------------
+
+def test_harden_reverse_proxy_simple_single_line():
+    content = "app.example.com {\n    reverse_proxy localhost:8080\n}\n"
+    new_content, status = harden_reverse_proxy_in_site(
+        content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "updated"
+    assert (
+        "    reverse_proxy localhost:8080 {\n"
+        "        flush_interval -1\n"
+        "        transport http {\n"
+        "            keepalive_idle 5m\n"
+        "            keepalive_interval 30s\n"
+        "        }\n"
+        "    }\n"
+    ) in new_content
+
+
+def test_harden_reverse_proxy_multiline_block():
+    content = (
+        "app.example.com {\n"
+        "  reverse_proxy localhost:8080 {\n"
+        "    lb_policy round_robin\n"
+        "  }\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "updated"
+    assert "lb_policy round_robin" in new_content           # preserved
+    assert "flush_interval -1" in new_content
+    assert "keepalive_idle 5m" in new_content
+    assert "keepalive_interval 30s" in new_content
+    assert new_content.count("reverse_proxy") == 1           # not duplicated
+
+
+def test_harden_reverse_proxy_already_hardened_is_noop():
+    hardened = (
+        "app.example.com {\n"
+        "    reverse_proxy localhost:8080 {\n"
+        "        flush_interval -1\n"
+        "        transport http {\n"
+        "            keepalive_idle 5m\n"
+        "            keepalive_interval 30s\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        hardened, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "unchanged"
+    assert new_content == hardened
+
+
+def test_harden_reverse_proxy_partial_transport_adds_missing_keys():
+    content = (
+        "app.example.com {\n"
+        "  reverse_proxy localhost:8080 {\n"
+        "    transport http {\n"
+        "      keepalive_idle 5m\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "updated"
+    assert "flush_interval -1" in new_content
+    assert new_content.count("transport http {") == 1        # not duplicated
+    assert "keepalive_idle 5m" in new_content
+    assert "keepalive_interval 30s" in new_content
+
+
+def test_harden_reverse_proxy_upstream_not_found():
+    content = "app.example.com {\n    reverse_proxy localhost:8080\n}\n"
+    new_content, status = harden_reverse_proxy_in_site(content, "other:9999")
+    assert status == "not_found"
+    assert new_content == content
+
+
+def test_harden_reverse_proxy_conflict_keeps_existing_transport_values():
+    content = (
+        "app.example.com {\n"
+        "  reverse_proxy localhost:8080 {\n"
+        "    transport http {\n"
+        "      keepalive_idle 2m\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "conflict"
+    assert new_content == content   # nothing modified
+    assert "keepalive_idle 2m" in new_content
+
+
+def test_harden_reverse_proxy_invalid_upstream_is_error():
+    for bad in ("", "a b", "with{brace}", "with#hash"):
+        new_content, status = harden_reverse_proxy_in_site(
+            "example.com {\n}\n", bad)
+        assert status == "error"
+        assert new_content == "example.com {\n}\n"
+
+
+def test_harden_reverse_proxy_handles_multiple_sites_and_flush_disabled():
+    content = (
+        "a.example.com {\n"
+        "    reverse_proxy app:3000 {\n"
+        "        lb_policy first\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "b.example.com {\n"
+        "\treverse_proxy app:3000\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        content, "app:3000", flush=False, ka_idle="7m", ka_interval="60s")
+    assert status == "updated"
+    assert "flush_interval" not in new_content               # flush disabled
+    assert new_content.count("keepalive_idle 7m") == 2       # both occurrences
+    assert new_content.count("keepalive_interval 60s") == 2

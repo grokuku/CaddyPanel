@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .env
 users.json
 preferences.json

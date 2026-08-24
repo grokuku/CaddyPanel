@@ -23,17 +23,34 @@ services:
       # Standard ports for web traffic handled by Caddy.
       - "80:80"
       - "443:443"
-      # Port for the CaddyPanel web interface.
-      # You can comment this out after the initial setup if you only access
-      # the UI through a domain managed by Caddy.
+      # Port for the CaddyPanel web interface (initial setup over plain HTTP).
+      # SECURITY: once your admin account is created and the UI is reachable
+      # through the domain managed by Caddy, close this port (comment out the
+      # line below) so the panel is only served through Caddy with TLS.
       - "5000:5000"
 
     environment:
       # --- EDIT BELOW ---
       # Secret key to secure Flask sessions.
-      # !! VERY IMPORTANT !! Change this value to a long, random string.
-      # You can generate one with: openssl rand -hex 32
+      # !! VERY IMPORTANT !! Replace this placeholder with a long, random
+      # string BEFORE first use (generate one with: openssl rand -hex 32).
+      # THE PANEL WILL NOT WORK PROPERLY UNTIL YOU DO: placeholder/short
+      # values (< 32 chars) are REFUSED at startup and each gunicorn worker
+      # then generates its own ephemeral key -> login loop and random CSRF
+      # 400 errors (an explicit error is logged at startup).
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
+
+      # Reverse-proxy trust: number of trusted proxy hops in front of the app.
+      # Leave unset (or 0) while accessing the panel directly on port 5000:
+      # forgeable X-Forwarded-For headers are then ignored, so the login rate
+      # limiter cannot be bypassed by spoofing IPs. Once the panel is served
+      # through the bundled Caddy reverse proxy, set it to 1 so real client
+      # IPs are used for rate limiting.
+      # WARNING: keeping TRUSTED_PROXY_COUNT=0 while serving the panel THROUGH
+      # Caddy/nginx makes every request appear to come from the proxy's own
+      # address, i.e. ONE shared rate-limit bucket for ALL clients: anyone can
+      # lock /login for everybody for 5 minutes with 5 bad attempts.
+      # - TRUSTED_PROXY_COUNT=1
       
       # Session cookie security: CaddyPanel sets the Secure flag on the
       # session cookie by default (requires HTTPS). If you access the panel

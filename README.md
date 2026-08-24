@@ -57,17 +57,29 @@ services:
       # Standard ports for web traffic handled by Caddy.
       - "80:80"
       - "443:443"
-      # Port for the CaddyPanel web interface.
-      # You can comment this out after the initial setup if you only access
-      # the UI through a domain managed by Caddy.
+      # Port for the CaddyPanel web interface (initial setup over plain HTTP).
+      # SECURITY: once your admin account is created and the UI is reachable
+      # through the domain managed by Caddy, close this port (comment out the
+      # line below) so the panel is only served through Caddy with TLS.
       - "5000:5000"
 
     environment:
       # --- EDIT BELOW ---
       # Secret key to secure Flask sessions.
-      #  !! VERY IMPORTANT !! Change this value to a long, random string.
-      # You can generate one with: openssl rand -hex 32
+      #  !! VERY IMPORTANT !! Replace this placeholder with a long, random
+      # string BEFORE first use (generate one with: openssl rand -hex 32).
+      # THE PANEL WILL NOT WORK PROPERLY UNTIL YOU DO: placeholder/short
+      # values (< 32 chars) are REFUSED at startup and each gunicorn worker
+      # then generates its own ephemeral key -> login loop and random CSRF
+      # 400 errors (an explicit error is logged at startup).
       - FLASK_SECRET_KEY=replace-me-with-a-secure-key
+
+      # Reverse-proxy trust: leave unset (or 0) while accessing the panel
+      # directly on port 5000. Once served through Caddy, set it to 1.
+      # WARNING: keeping TRUSTED_PROXY_COUNT=0 behind Caddy/nginx shares ONE
+      # login rate-limit bucket between ALL clients: anyone can lock /login
+      # for everybody for 5 minutes with 5 bad attempts.
+      # - TRUSTED_PROXY_COUNT=1
       
       # Session cookie security: the Secure flag is ON by default (HTTPS).
       # If you access the panel over plain HTTP (http://<ip>:5000) without a
@@ -99,6 +111,15 @@ openssl rand -hex 32
 ```
 Copy the output and paste it as the value for `FLASK_SECRET_KEY`.
 
+Placeholder values (such as `replace-me-with-a-secure-key`) and keys shorter
+than 32 characters are **refused at startup**: an explicit error is logged and
+an ephemeral random key is generated instead. Because the production
+entrypoint runs gunicorn with several workers (`--workers 4`), each worker
+generates its **own** ephemeral key: requests alternate randomly between
+workers, so you get an endless login loop and random `400 CSRF` errors — the
+panel is effectively **unusable** in that degraded state. Even with a single
+process, sessions will not survive restarts. Set a strong key before use.
+
 You should also set the `TZ` (timezone) variable to your local timezone.
 
 *# 4. Start the Container
@@ -117,6 +138,39 @@ The container will now start in the background.
 4.  Log in with your new credentials, and you can start configuring Caddy!
 
 ## Security & Environment Variables
+
+### Reverse-proxy trust (`TRUSTED_PROXY_COUNT`)
+
+By default CaddyPanel starts in **direct mode**: `X-Forwarded-*` headers sent
+by clients are **ignored** and the client IP used by the login rate limiter is
+the actual TCP connection address. This prevents an attacker with direct access
+to port 5000 from forging a different `X-Forwarded-For` value on every attempt
+to bypass rate limiting.
+
+If — and only if — the panel is reached through a reverse proxy that
+**overwrites** `X-Forwarded-For` (the bundled Caddy does), set the number of
+trusted proxy hops so real client IPs are restored:
+
+```sh
+# docker-compose.yml
+environment:
+  - TRUSTED_PROXY_COUNT=1
+```
+
+> [!WARNING]
+> Do **not** leave `TRUSTED_PROXY_COUNT=0` (direct mode) while serving the
+> panel through the bundled Caddy (or any other reverse proxy): every request
+> then appears to come from the proxy's own address (e.g. `127.0.0.1`), so all
+> clients share **one single** login rate-limiting bucket. Anyone — including
+> a remote attacker — can lock `/login` for **all users for 5 minutes** with
+> just 5 failed attempts. Set `TRUSTED_PROXY_COUNT=1` behind the bundled Caddy.
+> The active mode (and this trade-off) is explained in a startup log message.
+
+> [!IMPORTANT]
+> After the initial setup, close port 5000 (remove or comment out the
+> `"5000:5000"` mapping in `docker-compose.yml`) and access the panel through
+> the domain managed by Caddy. Port 5000 is plain HTTP and bypasses the reverse
+> proxy entirely.
 
 ### Session cookie (`FLASK_COOKIE_SECURE`)
 
@@ -155,6 +209,28 @@ FLASK_DEBUG=1 python app.py
 ```
 
 Debug mode is never used by the production (gunicorn) entrypoint.
+
+## Long-lived Connections & Keep-Alive (WebSockets / SSE)
+
+CaddyPanel can harden proxy connections for streaming workloads. Defaults live in
+`DEFAULT_PREFERENCES` (`app.py`) and are editable in **Preferences → "Long-lived Connections & Keep-Alive"**:
+
+| Preference | Default | Role |
+|---|---|---|
+| `globalServersOptionsEnabled` | `false` | Manage the hardened `servers` block in the Caddyfile global options |
+| `globalServersIdleTimeout` | `10m` | Global `servers { timeouts { idle … } }` value |
+| `globalKeepAliveInterval` | `30s` | Global `servers { keepalive_interval … }` value |
+| `siteFlushIntervalEnabled` | `true` | Inject `flush_interval -1` in generated/hardened `reverse_proxy` blocks |
+| `siteTransportKeepAliveIdle` | `5m` | `transport http { keepalive_idle … }` for generated/hardened sites |
+| `siteTransportKeepAliveInterval` | `30s` | `transport http { keepalive_interval … }` for generated/hardened sites |
+
+Endpoints (POST, JSON body, session + CSRF token required). Existing different values on disk are **never overwritten**:
+
+-   `POST /api/caddyfile/configure_servers_options` — body `{"idleTimeout": "10m", "keepAliveInterval": "30s"}` (optional, falls back to the saved preferences). Ensures the global block carries `servers { timeouts { idle … } keepalive_interval … }`. Exposed in the UI as the **"Apply to Caddyfile"** button.
+-   `POST /api/caddyfile/harden_site` — body `{"upstream": "http://app:8080", "flush": true, "keepAliveIdle": "5m", "keepAliveInterval": "30s"}` (`upstream` required, others optional). Hardens every matching `reverse_proxy <upstream>` directive. Exposed in the UI as the per-site 🛡️ **Harden** action.
+
+Possible parser statuses returned as `parser_status`: `created`, `updated`, `unchanged`, `conflict`, `not_found`, `error`
+(HTTP 200 except `not_found`/invalid parameters → 400 and write/parser failures → 500).
 
 ## Volumes Explained
 

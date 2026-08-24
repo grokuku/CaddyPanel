@@ -13,6 +13,15 @@ Features:
     - Preferences Tab:
         - Manages global options (email) and default values.
         - Saves/Loads preferences via the backend API.
+        - Long-lived Connections & Keep-Alive group: global server timeouts
+          (idle/keepalive_interval) with an "Apply to Caddyfile" action
+          (POST /api/caddyfile/configure_servers_options), plus per-site
+          reverse_proxy defaults (flush_interval, transport keep-alive).
+    - Site hardening:
+        - Generated reverse_proxy blocks include flush_interval -1 and an http
+          transport with keepalive tuning when enabled in preferences.
+        - Per-site 🛡️ "Harden" action injects the same options into the
+          existing Caddyfile via POST /api/caddyfile/harden_site.
 Technical choices:
     - Vanilla JavaScript.
     - Fetch API for backend communication.
@@ -64,11 +73,23 @@ const defaultAuthentikOutpostUrlInput = document.getElementById('default-authent
 const defaultAuthentikUriInput = document.getElementById('default-authentik-uri');
 const defaultAuthentikCopyHeadersInput = document.getElementById('default-authentik-copy-headers');
 const defaultAuthentikTrustedProxiesInput = document.getElementById('default-authentik-trusted-proxies');
+// Long-lived connections & keep-alive (Preferences tab)
+const globalServersOptionsEnabledInput = document.getElementById('global-servers-options-enabled');
+const globalServersIdleTimeoutInput = document.getElementById('global-servers-idle-timeout');
+const globalKeepAliveIntervalInput = document.getElementById('global-keepalive-interval');
+const siteFlushIntervalEnabledInput = document.getElementById('site-flush-interval-enabled');
+const siteTransportKeepAliveIdleInput = document.getElementById('site-transport-keepalive-idle');
+const siteTransportKeepAliveIntervalInput = document.getElementById('site-transport-keepalive-interval');
+const applyServersOptionsBtn = document.getElementById('apply-servers-options-btn');
+const serversOptionsStatusText = document.getElementById('servers-options-status-text');
 const maxmindAccountIdInput = document.getElementById('maxmind-account-id');
 const maxmindLicenseKeyInput = document.getElementById('maxmind-license-key');
 const testGeoipBtn = document.getElementById('test-geoip-btn');
 const downloadGeoipBtn = document.getElementById('download-geoip-btn');
 const geoipStatusText = document.getElementById('geoip-status-text');
+
+// Fallback list kept in sync with DEFAULT_PREFERENCES['defaultAuthentikCopyHeaders'] (app.py).
+const DEFAULT_AUTHENTIK_COPY_HEADERS = 'X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version';
 
 // --- Global State ---
 let currentPreferences = {};
@@ -121,6 +142,11 @@ if (themeSelect) {
 }
 if (savePrefsBtn) {
     savePrefsBtn.addEventListener('click', savePreferences);
+
+    // Apply global servers options to the Caddyfile (backend endpoint)
+    if (applyServersOptionsBtn) {
+        applyServersOptionsBtn.addEventListener('click', applyGlobalServersOptions);
+    }
 
     // GeoIP download button
     if (downloadGeoipBtn) {
@@ -375,6 +401,7 @@ function renderSitesTable() {
         cellActions.classList.add('actions');
         cellActions.innerHTML = `
             <button type="button" class="action-btn stats-btn" title="View Stats (placeholder)">📊</button>
+            <button type="button" class="action-btn harden-btn" title="Harden: inject flush_interval -1 + keep-alive transport into the existing Caddyfile">🛡️</button>
             <button type="button" class="action-btn edit-btn" title="Edit">✏️</button>
             <button type="button" class="action-btn delete-btn" title="Delete">❌</button>
         `;
@@ -404,6 +431,8 @@ async function handleTableActionClick(event) {
             generateCaddyfileFromData();
             await autoSaveAndReloadCaddy();
         }
+    } else if (target.classList.contains('harden-btn')) {
+        await hardenSite(index);
     } else if (target.classList.contains('stats-btn')) {
         const host = siteConfigs[index]?.address;
         if (host) {
@@ -437,7 +466,7 @@ async function handleTableCheckboxChange(event) {
                 siteConfigs[index].forward_auth = {
                     outpost_url: currentPreferences.defaultAuthentikOutpostUrl || '',
                     uri: currentPreferences.defaultAuthentikUri || '/outpost.goauthentik.io/auth/caddy',
-                    copy_headers: currentPreferences.defaultAuthentikCopyHeaders || 'X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks',
+                    copy_headers: currentPreferences.defaultAuthentikCopyHeaders || DEFAULT_AUTHENTIK_COPY_HEADERS,
                     trusted_proxies: currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges'
                 };
             }
@@ -488,7 +517,7 @@ function openSiteModal(index = -1) {
             siteData.forward_auth = { 
                 outpost_url: currentPreferences.defaultAuthentikOutpostUrl || '', 
                 uri: currentPreferences.defaultAuthentikUri || '/outpost.goauthentik.io/auth/caddy', 
-                copy_headers: currentPreferences.defaultAuthentikCopyHeaders || 'X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks', 
+                copy_headers: currentPreferences.defaultAuthentikCopyHeaders || DEFAULT_AUTHENTIK_COPY_HEADERS, 
                 trusted_proxies: currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges' 
             }; 
         } else {
@@ -535,7 +564,7 @@ function populateModal(data) {
         authCheckbox.checked = false; 
         document.getElementById('modal-authentik-outpost-url').value = currentPreferences.defaultAuthentikOutpostUrl || ''; 
         document.getElementById('modal-authentik-uri').value = currentPreferences.defaultAuthentikUri || '/outpost.goauthentik.io/auth/caddy'; 
-        document.getElementById('modal-authentik-copy-headers').value = currentPreferences.defaultAuthentikCopyHeaders || 'X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks';
+        document.getElementById('modal-authentik-copy-headers').value = currentPreferences.defaultAuthentikCopyHeaders || DEFAULT_AUTHENTIK_COPY_HEADERS;
         document.getElementById('modal-authentik-trusted-proxies').value = currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges';
         authOptions.forEach(el => el.style.display = 'none'); 
     }
@@ -628,7 +657,7 @@ function handleModalAuthentikCheckboxChange(event) {
 
         if (!outpostUrlInput.value) outpostUrlInput.value = currentPreferences.defaultAuthentikOutpostUrl || '';
         if (!uriInput.value) uriInput.value = currentPreferences.defaultAuthentikUri || '/outpost.goauthentik.io/auth/caddy';
-        if (!copyHeadersInput.value) copyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || 'X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks';
+        if (!copyHeadersInput.value) copyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || DEFAULT_AUTHENTIK_COPY_HEADERS;
         if (!trustedProxiesInput.value) trustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges';
     }
 }
@@ -642,11 +671,25 @@ function generateCaddyfileBlock(site) {
     if (site.reverse_proxy) { 
         const p = site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@') ? site.reverse_proxy : `http://${site.reverse_proxy}`; 
         blockContent += `\treverse_proxy ${p}`;
-        if (site.tls_skip_verify && p.startsWith('https://')) { 
-            blockContent += ` {\n\t\ttransport http {\n\t\t\ttls_insecure_skip_verify\n\t\t}\n\t}\n`; 
-        } else { 
-            blockContent += `\n`; 
-        } 
+        // Hardened options driven by the saved preferences (WebSockets/SSE friendly).
+        const wantsFlush = !!currentPreferences.siteFlushIntervalEnabled;
+        const kaIdle = (currentPreferences.siteTransportKeepAliveIdle || '').trim();
+        const kaInterval = (currentPreferences.siteTransportKeepAliveInterval || '').trim();
+        const skipVerify = !!(site.tls_skip_verify && p.startsWith('https://'));
+        if (wantsFlush || skipVerify || kaIdle || kaInterval) {
+            blockContent += ` {\n`;
+            if (wantsFlush) blockContent += `\t\tflush_interval -1\n`;
+            if (skipVerify || kaIdle || kaInterval) {
+                blockContent += `\t\ttransport http {\n`;
+                if (skipVerify) blockContent += `\t\t\ttls_insecure_skip_verify\n`;
+                if (kaIdle) blockContent += `\t\t\tkeepalive_idle ${kaIdle}\n`;
+                if (kaInterval) blockContent += `\t\t\tkeepalive_interval ${kaInterval}\n`;
+                blockContent += `\t\t}\n`;
+            }
+            blockContent += `\t}\n`;
+        } else {
+            blockContent += `\n`;
+        }
     }
 
     if (site.tls && site.tls !== 'auto') { 
@@ -674,15 +717,25 @@ function generateCaddyfileFromData() {
     if (!outputTextarea || !globalAdminEmailInput) { return; }
     let caddyfileContent = ''; 
     const adminEmail = globalAdminEmailInput.value.trim();
+    // Global options block: email + (optionally) hardened servers timeouts,
+    // mirroring what POST /api/caddyfile/configure_servers_options injects.
+    const globalLines = [];
     if (adminEmail) {
-        caddyfileContent += `{\n\temail ${adminEmail}\n}\n\n`;
+        globalLines.push(`\temail ${adminEmail}`);
     } else {
-        caddyfileContent += `{
-	# email admin@example.com # Uncomment and set your email for ACME
-}
-
-`;
+        globalLines.push(`\t# email admin@example.com # Uncomment and set your email for ACME`);
     }
+    if (globalServersOptionsEnabledInput && globalServersOptionsEnabledInput.checked) {
+        const idleTimeout = ((globalServersIdleTimeoutInput?.value || currentPreferences.globalServersIdleTimeout || '10m')).trim() || '10m';
+        const keepAliveInterval = ((globalKeepAliveIntervalInput?.value || currentPreferences.globalKeepAliveInterval || '30s')).trim() || '30s';
+        globalLines.push(`\tservers {`);
+        globalLines.push(`\t\ttimeouts {`);
+        globalLines.push(`\t\t\tidle ${idleTimeout}`);
+        globalLines.push(`\t\t}`);
+        globalLines.push(`\t\tkeepalive_interval ${keepAliveInterval}`);
+        globalLines.push(`\t}`);
+    }
+    caddyfileContent += `{\n${globalLines.join('\n')}\n}\n\n`;
 
     if (siteConfigs.length === 0) {
         caddyfileContent += `# No site configurations defined.\n`;
@@ -744,6 +797,76 @@ async function autoSaveAndReloadCaddy() {
     return _saveChain;
 }
 
+// --- Long-lived Connections & Keep-Alive (global options + per-site hardening) ---
+async function applyGlobalServersOptions() {
+    if (!applyServersOptionsBtn) return;
+    const idleTimeout = (globalServersIdleTimeoutInput?.value || currentPreferences.globalServersIdleTimeout || '10m').trim() || '10m';
+    const keepAliveInterval = (globalKeepAliveIntervalInput?.value || currentPreferences.globalKeepAliveInterval || '30s').trim() || '30s';
+    applyServersOptionsBtn.disabled = true;
+    const originalLabel = applyServersOptionsBtn.textContent;
+    applyServersOptionsBtn.textContent = 'Applying...';
+    try {
+        const response = await fetch('/api/caddyfile/configure_servers_options', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({ idleTimeout: idleTimeout, keepAliveInterval: keepAliveInterval })
+        });
+        const result = await response.json();
+        const parserStatus = result.parser_status || result.status || 'unknown';
+        if (serversOptionsStatusText) serversOptionsStatusText.textContent = `Status: ${parserStatus}`;
+        const toastType = result.status === 'error' ? 'error' : (result.status === 'conflict' ? 'warning' : 'success');
+        showToast(result.message || `Global server options applied (${parserStatus}).`, toastType, 8000);
+    } catch (err) {
+        console.error('Error applying global servers options:', err);
+        if (serversOptionsStatusText) serversOptionsStatusText.textContent = 'Status: error';
+        showToast(`Error applying global server options: ${err.message}`, 'error', 8000);
+    } finally {
+        applyServersOptionsBtn.disabled = false;
+        applyServersOptionsBtn.textContent = originalLabel;
+    }
+}
+
+// Compute the upstream as written in the Caddyfile (mirrors generateCaddyfileBlock).
+function siteUpstreamAsInCaddyfile(site) {
+    if (!site?.reverse_proxy) return '';
+    return site.reverse_proxy.includes('://') || site.reverse_proxy.startsWith('@')
+        ? site.reverse_proxy
+        : `http://${site.reverse_proxy}`;
+}
+
+async function hardenSite(index) {
+    const site = siteConfigs[index];
+    if (!site) return;
+    let defaultUpstream = siteUpstreamAsInCaddyfile(site);
+    const answer = prompt('Upstream to harden in the Caddyfile (reverse_proxy target):', defaultUpstream);
+    if (answer === null) return; // user cancelled
+    const upstream = answer.trim();
+    if (!upstream || /[\s{}#]/.test(upstream)) {
+        showToast('Invalid upstream address.', 'warning');
+        return;
+    }
+    showToast(`Hardening reverse_proxy ${upstream}...`, 'info', 10000);
+    try {
+        const response = await fetch('/api/caddyfile/harden_site', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+            body: JSON.stringify({
+                upstream: upstream,
+                flush: !!(currentPreferences.siteFlushIntervalEnabled),
+                keepAliveIdle: (currentPreferences.siteTransportKeepAliveIdle || '').trim(),
+                keepAliveInterval: (currentPreferences.siteTransportKeepAliveInterval || '').trim()
+            })
+        });
+        const result = await response.json();
+        const parserStatus = result.parser_status || result.status || 'unknown';
+        const toastType = result.status === 'error' ? 'error' : (result.status === 'conflict' ? 'warning' : 'success');
+        showToast(result.message || `Harden result: ${parserStatus}`, toastType, 8000);
+    } catch (err) {
+        console.error('Error hardening site:', err);
+        showToast(`Error hardening site: ${err.message}`, 'error', 8000);
+    }
+}
+
 // --- Preferences ---
 function applyTheme(themeValue) {
     document.body.className = ''; 
@@ -766,7 +889,13 @@ async function savePreferences() {
         defaultAuthentikOutpostUrl: defaultAuthentikOutpostUrlInput.value.trim(), 
         defaultAuthentikUri: defaultAuthentikUriInput.value.trim(), 
         defaultAuthentikCopyHeaders: defaultAuthentikCopyHeadersInput.value.trim(), 
-        defaultAuthentikTrustedProxies: defaultAuthentikTrustedProxiesInput.value.trim() 
+        defaultAuthentikTrustedProxies: defaultAuthentikTrustedProxiesInput.value.trim(), 
+        globalServersOptionsEnabled: globalServersOptionsEnabledInput ? globalServersOptionsEnabledInput.checked : false,
+        globalServersIdleTimeout: globalServersIdleTimeoutInput ? globalServersIdleTimeoutInput.value.trim() : '10m',
+        globalKeepAliveInterval: globalKeepAliveIntervalInput ? globalKeepAliveIntervalInput.value.trim() : '30s',
+        siteFlushIntervalEnabled: siteFlushIntervalEnabledInput ? siteFlushIntervalEnabledInput.checked : true,
+        siteTransportKeepAliveIdle: siteTransportKeepAliveIdleInput ? siteTransportKeepAliveIdleInput.value.trim() : '5m',
+        siteTransportKeepAliveInterval: siteTransportKeepAliveIntervalInput ? siteTransportKeepAliveIntervalInput.value.trim() : '30s'
     };
     
     if (currentPreferences.caddyfilePath) prefsToSave.caddyfilePath = currentPreferences.caddyfilePath;
@@ -817,6 +946,13 @@ async function loadPreferences() {
         if (defaultAuthentikUriInput) defaultAuthentikUriInput.value = currentPreferences.defaultAuthentikUri || "";
         if (defaultAuthentikCopyHeadersInput) defaultAuthentikCopyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || "";
         if (defaultAuthentikTrustedProxiesInput) defaultAuthentikTrustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || "";
+        if (globalServersOptionsEnabledInput) globalServersOptionsEnabledInput.checked = currentPreferences.globalServersOptionsEnabled || false;
+        if (globalServersIdleTimeoutInput) globalServersIdleTimeoutInput.value = currentPreferences.globalServersIdleTimeout || "10m";
+        if (globalKeepAliveIntervalInput) globalKeepAliveIntervalInput.value = currentPreferences.globalKeepAliveInterval || "30s";
+        // Backend default for this toggle is True: only an explicit false turns it off.
+        if (siteFlushIntervalEnabledInput) siteFlushIntervalEnabledInput.checked = currentPreferences.siteFlushIntervalEnabled !== false;
+        if (siteTransportKeepAliveIdleInput) siteTransportKeepAliveIdleInput.value = currentPreferences.siteTransportKeepAliveIdle || "5m";
+        if (siteTransportKeepAliveIntervalInput) siteTransportKeepAliveIntervalInput.value = currentPreferences.siteTransportKeepAliveInterval || "30s";
         if (maxmindLicenseKeyInput) maxmindLicenseKeyInput.value = currentPreferences.maxmindLicenseKey || "";
         if (maxmindAccountIdInput) maxmindAccountIdInput.value = currentPreferences.maxmindAccountId || "";
 
@@ -891,6 +1027,24 @@ function parseCaddyfile(content) {
             const emailMatch = globalContent.match(/^\s*email\s+([^\s]+)/m);
             if (emailMatch && emailMatch[1] && globalAdminEmailInput) {
                 globalAdminEmailInput.value = emailMatch[1];
+            }
+            // Parse optional hardened servers options (idle timeout + keep-alive)
+            // so the Preferences fields stay in sync with the Caddyfile on disk.
+            const serversIdx = globalContent.search(/^\s*servers\s*\{/m);
+            if (serversIdx !== -1) {
+                const serversBrace = globalContent.indexOf('{', serversIdx);
+                const serversClose = findMatchingBrace(globalContent, serversBrace);
+                if (serversBrace !== -1 && serversClose !== -1) {
+                    const serversBody = globalContent.substring(serversBrace + 1, serversClose);
+                    const idleMatch = serversBody.match(/^\s*timeouts\s*\{[\s\S]*?^\s*idle\s+([^\s#]+)/m);
+                    const kaMatch = serversBody.match(/^\s*keepalive_interval\s+([^\s#]+)/m);
+                    if (globalServersOptionsEnabledInput) globalServersOptionsEnabledInput.checked = true;
+                    if (idleMatch && globalServersIdleTimeoutInput) globalServersIdleTimeoutInput.value = idleMatch[1].trim();
+                    if (kaMatch && globalKeepAliveIntervalInput) globalKeepAliveIntervalInput.value = kaMatch[1].trim();
+                    currentPreferences.globalServersOptionsEnabled = true;
+                    if (idleMatch) currentPreferences.globalServersIdleTimeout = idleMatch[1].trim();
+                    if (kaMatch) currentPreferences.globalKeepAliveInterval = kaMatch[1].trim();
+                }
             }
         }
     }

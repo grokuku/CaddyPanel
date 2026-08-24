@@ -110,6 +110,22 @@
                     <div class="form-group"> <label for="default-authentik-copy-headers">Default Headers to Copy:</label> <input type="text" id="default-authentik-copy-headers" name="defaultAuthentikCopyHeaders"> </div>
                     <div class="form-group"> <label for="default-authentik-trusted-proxies">Default Trusted Proxies:</label> <input type="text" id="default-authentik-trusted-proxies" name="defaultAuthentikTrustedProxies"> </div>
                 <hr>
+                    <h3>Long-lived Connections &amp; Keep-Alive</h3>
+                    <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">Hardened timeouts for WebSockets / SSE / streaming. Values use Go duration syntax (e.g. <code>10m</code>, <code>30s</code>).</p>
+                    <h4>Global Server Options (Caddyfile global block)</h4>
+                    <div class="form-group form-group-inline"> <input type="checkbox" id="global-servers-options-enabled" name="globalServersOptionsEnabled"> <label for="global-servers-options-enabled">Enable global server options (idle timeout + keep-alive interval)</label> </div>
+                    <div class="form-group"> <label for="global-servers-idle-timeout">Global Idle Timeout:</label> <input type="text" id="global-servers-idle-timeout" name="globalServersIdleTimeout" placeholder="10m"> </div>
+                    <div class="form-group"> <label for="global-keepalive-interval">Global Keep-Alive Interval:</label> <input type="text" id="global-keepalive-interval" name="globalKeepAliveInterval" placeholder="30s"> </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+                        <button type="button" id="apply-servers-options-btn">Apply to Caddyfile</button>
+                        <span id="servers-options-status-text" style="font-size:0.8em;color:var(--text-secondary);"></span>
+                    </div>
+                    <small style="display:block;margin:4px 0 10px 0;color:var(--text-secondary);">Applies the values above to the Caddyfile global block via the backend. Existing different values are never overwritten.</small>
+                    <h4>Per-site reverse_proxy Options (defaults)</h4>
+                    <div class="form-group form-group-inline"> <input type="checkbox" id="site-flush-interval-enabled" name="siteFlushIntervalEnabled" checked> <label for="site-flush-interval-enabled">Inject 'flush_interval -1' in generated/hardened sites (recommended for WebSockets/SSE)</label> </div>
+                    <div class="form-group"> <label for="site-transport-keepalive-idle">Transport keepalive_idle:</label> <input type="text" id="site-transport-keepalive-idle" name="siteTransportKeepAliveIdle" placeholder="5m"> </div>
+                    <div class="form-group"> <label for="site-transport-keepalive-interval">Transport keepalive_interval:</label> <input type="text" id="site-transport-keepalive-interval" name="siteTransportKeepAliveInterval" placeholder="30s"> </div>
+                <hr>
                     <h3>GeoIP / Statistics</h3>
                     <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">Enable country-level statistics by providing MaxMind credentials. <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">Create a free account &rarr;</a></p>
                     <div class="form-group"> <label for="maxmind-account-id">MaxMind Account ID:</label> <input type="text" id="maxmind-account-id" name="maxmindAccountId" placeholder="e.g. 200922"> </div>

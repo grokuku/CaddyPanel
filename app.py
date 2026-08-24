@@ -24,7 +24,10 @@ from caddyfile_parser import (
     remove_directive_block,
     add_log_to_site_blocks,
     configure_caddyfile_logging as _configure_caddyfile_logging_impl,
+    ensure_global_servers_options,
+    harden_reverse_proxy_in_site,
 )
+from fs_utils import atomic_write, cleanup_stale_tmp_files
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +106,117 @@ DEFAULT_PREFERENCES = {
     "defaultAuthentikEnabled": False, 
     "defaultAuthentikOutpostUrl": "http://authentik.local:9000", 
     "defaultAuthentikUri": "/outpost.goauthentik.io/auth/caddy", 
-    "defaultAuthentikCopyHeaders": "X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks", 
+    "defaultAuthentikCopyHeaders": "X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version", 
     "defaultAuthentikTrustedProxies": "private_ranges", 
-    "defaultSkipTlsVerify": False 
+    "defaultSkipTlsVerify": False,
+    # Hardened global servers options (Caddyfile global block)
+    "globalServersOptionsEnabled": False,
+    "globalServersIdleTimeout": "10m",
+    "globalKeepAliveInterval": "30s",
+    # Hardened per-site reverse_proxy transport options
+    "siteFlushIntervalEnabled": True,
+    "siteTransportKeepAliveIdle": "5m",
+    "siteTransportKeepAliveInterval": "30s"
 }
 
 app = Flask(__name__)
 
-# Fix request.remote_addr behind a reverse proxy (Caddy)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1) 
 
-_flask_secret = os.environ.get('FLASK_SECRET_KEY')
-if not _flask_secret or _flask_secret == 'dev-only-unsafe-default-key-3f9a1z-CHANGE-IN-PROD':
+def _trusted_proxy_count_from_env():
+    """Parse TRUSTED_PROXY_COUNT: the number of trusted reverse-proxy hops.
+
+    Defaults to 0 (direct mode): no X-Forwarded-* header is trusted and
+    request.remote_addr stays the actual TCP peer address. This keeps the
+    login rate limiter immune to forged X-Forwarded-For values when the app
+    is served directly (e.g. port 5000 without a proxy in front).
+    Set it ONLY when a trusted reverse proxy in front of the app overwrites
+    X-Forwarded-For (the bundled Caddy does), typically TRUSTED_PROXY_COUNT=1.
+    """
+    raw = (os.environ.get('TRUSTED_PROXY_COUNT') or '').strip()
+    if not raw:
+        return 0
+    try:
+        count = int(raw)
+    except ValueError:
+        logger.error(f"Invalid TRUSTED_PROXY_COUNT={raw!r}: must be an integer. "
+                     "Falling back to 0 (direct mode, proxy headers ignored).")
+        return 0
+    if count < 0:
+        logger.warning(f"Negative TRUSTED_PROXY_COUNT={raw!r}: clamping to 0 "
+                       "(direct mode, X-Forwarded-* headers ignored).")
+        return 0
+    return count
+
+
+# Rewrite remote_addr / scheme / host from X-Forwarded-* headers ONLY when the
+# app sits behind a trusted reverse proxy. Never enable this when serving the
+# app directly: clients could forge X-Forwarded-For to rotate their apparent
+# IP address and bypass the per-IP login rate limiting.
+_TRUSTED_PROXY_COUNT = _trusted_proxy_count_from_env()
+if _TRUSTED_PROXY_COUNT > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_TRUSTED_PROXY_COUNT,
+                            x_proto=_TRUSTED_PROXY_COUNT,
+                            x_host=_TRUSTED_PROXY_COUNT,
+                            x_prefix=_TRUSTED_PROXY_COUNT)
+    logger.info(f"Reverse-proxy mode enabled: trusting {_TRUSTED_PROXY_COUNT} proxy hop(s) "
+                "(X-Forwarded-* headers are honored). Make sure no untrusted client "
+                "can reach this instance without going through the trusted proxy.")
+    logger.warning("Reverse-proxy mode: ensure port 5000 (or your FLASK_PORT) is NOT "
+                   "exposed directly. A client bypassing the trusted proxy could forge "
+                   "X-Forwarded-For to rotate its apparent IP and defeat the login "
+                   "rate limiter.")
+else:
+    logger.info("Direct mode (TRUSTED_PROXY_COUNT=0): X-Forwarded-* headers are "
+                "ignored; set TRUSTED_PROXY_COUNT only if a trusted reverse proxy "
+                "sits in front of the panel.")
+    logger.warning("Direct mode caveat: if this instance is served BEHIND a reverse "
+                   "proxy anyway (bundled Caddy or nginx), every request appears to "
+                   "come from the proxy's address, so ALL clients share ONE login "
+                   "rate-limit bucket: anyone can lock /login for everybody for 5 "
+                   "minutes with a few bad attempts. Serve the panel directly OR set "
+                   "TRUSTED_PROXY_COUNT=1 behind the bundled Caddy.")
+
+# Publicly-known placeholder values (legacy default and examples shipped in
+# docker-compose.yml / README.md / GEMINI.md). They must NEVER be accepted as
+# a session-signing key: anyone could forge valid session cookies.
+_INSECURE_SECRET_KEY_VALUES = frozenset({
+    'dev-only-unsafe-default-key-3f9a1z-change-in-prod',
+    'replace-me-with-a-secure-key',
+    'your_very_strong_secret_key_here',
+    'your_strong_secret',
+})
+_MIN_SECRET_KEY_LENGTH = 32
+
+
+def insecure_secret_key_reason(secret):
+    """Return why *secret* must be refused, or None when it looks safe.
+
+    Refused: unset/empty, a publicly-known placeholder value
+    (case-insensitive), or a key shorter than _MIN_SECRET_KEY_LENGTH chars.
+    """
+    if not secret or not secret.strip():
+        return 'is not set'
+    normalized = secret.strip().lower()
+    if normalized in _INSECURE_SECRET_KEY_VALUES:
+        return 'matches a publicly-known placeholder value'
+    if len(normalized) < _MIN_SECRET_KEY_LENGTH:
+        return (f'is too short ({len(normalized)} characters, '
+                f'minimum {_MIN_SECRET_KEY_LENGTH})')
+    return None
+
+
+_flask_secret = (os.environ.get('FLASK_SECRET_KEY') or '').strip()
+_secret_rejection_reason = insecure_secret_key_reason(_flask_secret)
+if _secret_rejection_reason:
     app.config['SECRET_KEY'] = secrets.token_hex(32)
-    logger.warning("FLASK_SECRET_KEY not set or using the default insecure key. A random temporary key was generated. "
-          "Sessions will not persist across restarts. Set FLASK_SECRET_KEY environment variable for production use.")
+    logger.error(f"FLASK_SECRET_KEY {_secret_rejection_reason}: the configured value was REFUSED "
+          "and a random temporary key was generated PER PROCESS. With multiple workers "
+          "(gunicorn --workers 4) each worker generates its own key: sessions break on "
+          "every request that lands on another worker, causing an endless login loop and "
+          "random CSRF 400 errors -- THE PANEL IS UNUSABLE in this degraded mode. Even "
+          "with a single process, sessions will not persist across restarts. Set a strong "
+          "FLASK_SECRET_KEY environment variable for production use "
+          "(generate one with: openssl rand -hex 32).")
 else:
     app.config['SECRET_KEY'] = _flask_secret
 app.config['USERS_FILE'] = USERS_FILE
@@ -135,6 +234,11 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
 # Initialize stats database (works both with dev server and gunicorn)
 stats_aggregator.init_stats_db(STATS_DB_PATH)
 
+# Remove temp files left over by a previous crash (SIGKILL / power loss)
+# before anything can read them: they are partial copies of sensitive data.
+# Defense in depth: /api/readfile also refuses '*.tmp' names at read time.
+cleanup_stale_tmp_files(APP_DATA_DIR)
+
 # Configure GeoIP (optional – if mmdb file exists at the configured path)
 GEOIP_DB_PATH = os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb'))
 if Path(GEOIP_DB_PATH).is_file():
@@ -145,25 +249,41 @@ else:
     logger.info("       Get a free license key at https://www.maxmind.com/en/geolite2/signup")
 
 # --- User Management Helpers ---
-# ... (load_users, save_users, get_admin_user - unchanged)
+# ... (load_users, save_users, get_admin_user)
+class UsersFileCorrupted(RuntimeError):
+    """Raised when users.json exists but cannot be read or parsed.
+
+    Fail-safe: a corrupted users file must NEVER be treated as "no users",
+    otherwise a truncated users.json (e.g. crash mid-write) would make the
+    panel believe there is no admin and reopen /setup to anyone. Manual
+    intervention (restore a backup, or delete the file deliberately) is
+    required before setup can run again.
+    """
+
+
 def load_users():
     users_file_path = app.config['USERS_FILE']
     if not users_file_path.exists(): return {}
     try:
-        with open(users_file_path, 'r') as f: return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        logger.error(f"Error loading users file '{users_file_path}': {e}. Assuming no users.")
-        return {}
+        with open(users_file_path, 'r', encoding='utf-8') as f: users = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        logger.error(f"Error loading users file '{users_file_path}': {e}")
+        raise UsersFileCorrupted(
+            f"'{users_file_path}' exists but is unreadable or corrupted ({e}). "
+            "Refusing to treat it as empty: restore a backup or delete the file "
+            "deliberately, then restart.") from e
+    if not isinstance(users, dict):
+        logger.error(f"Users file '{users_file_path}' does not contain a JSON object.")
+        raise UsersFileCorrupted(
+            f"'{users_file_path}' does not contain a JSON object. "
+            "Manual intervention required: restore a backup or delete the file.")
+    return users
 
 def save_users(users):
     users_file_path = app.config['USERS_FILE']
-    try:
-        users_file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(users_file_path, 'w') as f: json.dump(users, f, indent=4)
-        return True
-    except IOError as e:
-        logger.error(f"Error saving users file '{users_file_path}': {e}")
-        return False
+    # Atomic write (tmp file + os.replace) so a crash can never truncate the
+    # file; owner-only permissions because it holds password hashes.
+    return atomic_write(users_file_path, json.dumps(users, indent=4), mode=0o600)
 
 def get_admin_user():
     users = load_users()
@@ -190,14 +310,9 @@ def load_preferences():
 
 def save_preferences(prefs):
     prefs_file_path = app.config['PREFERENCES_FILE']
-    try:
-        prefs_file_path.parent.mkdir(parents=True, exist_ok=True)
-        prefs["caddyfilePath"] = str(CADDY_CONFIG_FILE)
-        with open(prefs_file_path, 'w') as f: json.dump(prefs, f, indent=4)
-        return True
-    except IOError as e:
-        logger.error(f"Error saving preferences file '{prefs_file_path}': {e}")
-        return False
+    prefs["caddyfilePath"] = str(CADDY_CONFIG_FILE)
+    # Owner-only: preferences.json holds the MaxMind license key in plaintext.
+    return atomic_write(prefs_file_path, json.dumps(prefs, indent=4), mode=0o600)
 
 
 def _maxmind_credentials_from_env():
@@ -241,7 +356,16 @@ def login_required(f):
 def admin_setup_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if get_admin_user():
+        try:
+            admin_exists = bool(get_admin_user())
+        except UsersFileCorrupted as e:
+            # Fail-safe: never let a corrupted users.json reopen /setup.
+            logger.error(f"Refusing to serve setup-capable routes: {e}")
+            abort(500, description="users.json exists but is unreadable/corrupted. "
+                                   "Setup is refused for security. Manual intervention "
+                                   "required: restore a valid users.json (or delete it "
+                                   "deliberately) and restart the service.")
+        if admin_exists:
             if 'username' in session: return redirect(url_for('index'))
             else: return redirect(url_for('login'))
         return f(*args, **kwargs)
@@ -348,7 +472,17 @@ def setup():
         elif password != confirm_password: flash("Passwords do not match.", "danger")
         elif len(password) < 8: flash("Password must be at least 8 characters long.", "danger")
         else:
-            if get_admin_user():
+            try:
+                admin_exists = bool(get_admin_user())
+            except UsersFileCorrupted as e:
+                # Same fail-safe as the admin_setup_required decorator: never
+                # let a corrupted users.json be probed from the POST handler.
+                logger.error(f"Refusing setup POST: {e}")
+                abort(500, description="users.json exists but is unreadable/corrupted. "
+                                       "Setup is refused for security. Manual intervention "
+                                       "required: restore a valid users.json (or delete it "
+                                       "deliberately) and restart the service.")
+            if admin_exists:
                 flash("An admin account already exists.", "danger")
                 return redirect(url_for('login'))
             users = {}
@@ -366,7 +500,15 @@ def setup():
 def login():
     # ... (existing code for login - unchanged)
     if 'username' in session: return redirect(url_for('index'))
-    if not get_admin_user():
+    try:
+        admin_exists = bool(get_admin_user())
+    except UsersFileCorrupted as e:
+        # Fail-closed: a corrupted users file must not redirect to /setup.
+        logger.error(f"Refusing to serve login: {e}")
+        abort(500, description="users.json exists but is unreadable/corrupted. "
+                               "Manual intervention required: restore a valid "
+                               "users.json and restart the service.")
+    if not admin_exists:
          flash("No admin account found. Please set up the administrator.", "info")
          return redirect(url_for('setup'))
     if request.method == 'POST':
@@ -374,8 +516,10 @@ def login():
         password = request.form.get('password')
 
         # --- Rate limiting (shared across workers via SQLite; in-memory fallback) ---
-        # ProxyFix (x_for=1) already rewrites request.remote_addr from the
-        # trusted X-Forwarded-For header, so it reflects the real client IP.
+        # Direct mode (default, TRUSTED_PROXY_COUNT=0): remote_addr is the TCP
+        # peer address, so forged X-Forwarded-For headers cannot rotate the
+        # rate-limit identity. Proxy mode (TRUSTED_PROXY_COUNT>0): ProxyFix has
+        # already rewritten remote_addr from the trusted proxy chain.
         # Never trust the raw X-Forwarded-For header here (client-forgeable).
         ip = request.remote_addr or 'unknown'
         now = time.time()
@@ -419,7 +563,15 @@ def api_change_password():
     if len(new_password) < 8:
         return jsonify({"status": "error", "message": "New password must be at least 8 characters long."}), 400
 
-    users = load_users()
+    try:
+        users = load_users()
+    except UsersFileCorrupted as e:
+        # API endpoint: return a JSON error instead of an HTML 500 page.
+        logger.error(f"Refusing /api/change-password: {e}")
+        return jsonify({"status": "error",
+                        "message": "users.json exists but is unreadable/corrupted. "
+                                   "Manual intervention required: restore a valid "
+                                   "users.json and restart the service."}), 500
     username = session.get('username')
     user_data = users.get(username)
 
@@ -574,7 +726,9 @@ def _try_geoip_download_and_configure(account_id=None, license_key=None):
         )
         conf_path = APP_DATA_DIR / 'GeoIP.conf'
         try:
-            conf_path.write_text(conf_content)
+            # Owner-only (0o600): the file contains the MaxMind license key.
+            if not atomic_write(conf_path, conf_content, mode=0o600):
+                raise RuntimeError("could not write GeoIP.conf with owner-only permissions")
             result = subprocess.run(
                 [geoipupdate_bin, '-f', str(conf_path), '-d', str(geoip_path.parent)],
                 capture_output=True, text=True, timeout=120,
@@ -767,8 +921,12 @@ def read_file():
     # ... (existing code for read_file - unchanged)
     req_path_str = request.args.get('path')
     if not req_path_str: return jsonify({"status": "error", "message": "No path"}), 400
-    # Block access to sensitive files
-    if Path(req_path_str).name in SENSITIVE_FILES: abort(403)
+    # Block access to sensitive files. Also refuse atomic_write leftovers
+    # ('.users.json.ab12.tmp', ...): their exact basename is not in
+    # SENSITIVE_FILES but they can contain partial copies of secrets, so any
+    # '.tmp' name is refused too.
+    requested_name = Path(req_path_str).name
+    if requested_name in SENSITIVE_FILES or requested_name.endswith('.tmp'): abort(403)
     try:
         requested_file_path = FILE_BROWSE_DIR.joinpath(req_path_str).resolve()
         if not _is_within_directory(requested_file_path, FILE_BROWSE_DIR): abort(403)
@@ -821,9 +979,10 @@ def save_caddyfile_content():
                 logger.warning(f"Could not run caddy validation ({e}); skipping validation.")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
-        # Si validation OK, écrire le fichier de production
+        # Si validation OK, écrire le fichier de production (atomic write)
         CADDY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CADDY_CONFIG_FILE.write_text(content, encoding='utf-8')
+        if not atomic_write(CADDY_CONFIG_FILE, content):
+            return jsonify({"status": "error", "message": f"Failed to write {CADDY_CONFIG_FILE}. Check permissions and server logs."}), 500
         return jsonify({"status": "success", "message": f"Caddyfile saved to {CADDY_CONFIG_FILE}"})
     except PermissionError: return jsonify({"status": "error", "message": f"Permission denied writing to {CADDY_CONFIG_FILE}"}), 500
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
@@ -962,6 +1121,134 @@ def configure_caddyfile_logging():
     result = _configure_caddyfile_logging_internal()
     status_code = 500 if result.get("status") == "error" else 200
     return jsonify(result), status_code
+
+
+# --- API to harden servers options (global block) and reverse_proxy transports ---
+
+# Safe Caddy duration token: digits/letters/dots/plus/hyphen/micro sign only,
+# no whitespace, braces, '#' (prevents Caddyfile injection via these values).
+_DURATION_RE = re.compile(r'^[A-Za-z0-9\.\+\-µ]{1,32}$')
+_UPSTREAM_RE = re.compile(r'^[^\s{}#]{1,253}$')
+
+
+def _sanitize_duration(value, fallback):
+    """Return *value* if it is a safe Caddyfile duration token, else *fallback*."""
+    if isinstance(value, str) and _DURATION_RE.match(value):
+        return value
+    return fallback
+
+
+def _read_caddyfile_or_error():
+    """Read the Caddyfile; returns (content, None) or (None, error_result)."""
+    try:
+        content = CADDY_CONFIG_FILE.read_text(encoding='utf-8')
+        return content, None
+    except FileNotFoundError:
+        return None, {"status": "error",
+                      "message": f"Caddyfile not found at {CADDY_CONFIG_FILE}."}
+    except OSError as e:
+        return None, {"status": "error",
+                      "message": f"Failed to read the Caddyfile at {CADDY_CONFIG_FILE}: {e}"}
+
+
+def _reload_caddy_after_write():
+    """Best-effort `caddy reload` after a Caddyfile modification.
+    Returns a dict with 'status' in ('success', 'warning', 'error')."""
+    try:
+        command = ["caddy", "reload", "--config", str(CADDY_CONFIG_FILE), "--adapter", "caddyfile"]
+        result_proc = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        if result_proc.returncode == 0:
+            return {"status": "success", "message": "Caddy reloaded successfully."}
+        error_detail = (result_proc.stderr or result_proc.stdout or "Unknown error during reload.")[:500]
+        return {"status": "warning",
+                "message": f"Caddyfile updated, but Caddy reload failed (Code: {result_proc.returncode}).",
+                "details": error_detail}
+    except FileNotFoundError:
+        return {"status": "warning", "message": "Caddyfile updated, but caddy command not found for reload."}
+    except Exception as e:
+        return {"status": "error", "message": f"Error during Caddy reload: {e}"}
+
+
+def _apply_parser_to_caddyfile(parser_fn, success_verb):
+    """Shared plumbing for the hardening endpoints: read the Caddyfile, apply
+    *parser_fn(content) -> (new_content, parser_status)*, persist with an
+    atomic write when the content changed, then best-effort reload Caddy."""
+    content, error = _read_caddyfile_or_error()
+    if error is not None:
+        return jsonify(error), 500
+
+    new_content, parser_status = parser_fn(content)
+    if parser_status == "error":
+        return jsonify({"status": "error",
+                        "message": "Malformed Caddyfile or invalid argument; nothing was modified."}), 500
+
+    if parser_status != "conflict" and new_content != content:
+        if not atomic_write(CADDY_CONFIG_FILE, new_content):
+            return jsonify({"status": "error",
+                            "message": f"Failed to write the updated Caddyfile to {CADDY_CONFIG_FILE}. Check permissions and server logs."}), 500
+        reload_result = _reload_caddy_after_write()
+        message = f"{success_verb} ({parser_status}). {reload_result['message']}"
+        status = reload_result["status"]
+    else:
+        # 'unchanged' (already configured) or 'conflict' (different existing
+        # values left untouched): nothing was written, nothing to reload.
+        messages = {
+            "unchanged": f"No changes needed: options already present with these values.",
+            "conflict": "No changes applied: some options already exist with different values "
+                        "and are never overwritten.",
+        }
+        message = messages.get(parser_status, f"{success_verb} ({parser_status}).")
+        status = "success" if parser_status == "unchanged" else "conflict"
+
+    http_code = 500 if status == "error" else 200
+    return jsonify({"status": status, "parser_status": parser_status, "message": message}), http_code
+
+
+@app.route('/api/caddyfile/configure_servers_options', methods=['POST'])
+@login_required
+@csrf_required
+def configure_servers_options():
+    """Ensure the Caddyfile global block carries hardened servers timeouts
+    (timeouts.idle + keepalive_interval). Values come from the JSON body
+    ('idleTimeout' / 'keepAliveInterval') or fall back to the saved
+    preferences. Existing different values are never overwritten."""
+    data = request.get_json(silent=True) or {}
+    prefs = load_preferences()
+    idle_timeout = _sanitize_duration(data.get('idleTimeout'),
+                                      prefs.get('globalServersIdleTimeout', '10m'))
+    keepalive_interval = _sanitize_duration(data.get('keepAliveInterval'),
+                                            prefs.get('globalKeepAliveInterval', '30s'))
+    return _apply_parser_to_caddyfile(
+        lambda content: ensure_global_servers_options(content, idle_timeout, keepalive_interval),
+        "Global servers options configured")
+
+
+@app.route('/api/caddyfile/harden_site', methods=['POST'])
+@login_required
+@csrf_required
+def harden_site():
+    """Harden every ``reverse_proxy <upstream>`` directive by injecting
+    flush_interval -1 and an http transport with keepalive tuning. Options
+    come from the JSON body ('upstream' required; optional 'flush',
+    'keepAliveIdle', 'keepAliveInterval') or fall back to the saved
+    preferences. Existing different values are never overwritten."""
+    data = request.get_json(silent=True) or {}
+    upstream = data.get('upstream')
+    if not isinstance(upstream, str) or not _UPSTREAM_RE.match(upstream):
+        return jsonify({"status": "error",
+                        "message": "Invalid or missing 'upstream' parameter."}), 400
+    prefs = load_preferences()
+    flush = data.get('flush')
+    flush = bool(flush) if isinstance(flush, bool) else bool(prefs.get('siteFlushIntervalEnabled', True))
+    ka_idle = _sanitize_duration(data.get('keepAliveIdle'),
+                                 prefs.get('siteTransportKeepAliveIdle', '5m'))
+    ka_interval = _sanitize_duration(data.get('keepAliveInterval'),
+                                     prefs.get('siteTransportKeepAliveInterval', '30s'))
+    return _apply_parser_to_caddyfile(
+        lambda content: harden_reverse_proxy_in_site(content, upstream,
+                                                     flush=flush, ka_idle=ka_idle,
+                                                     ka_interval=ka_interval),
+        f"Reverse proxy {upstream} hardened")
 
 
 # Entry point to run the application
