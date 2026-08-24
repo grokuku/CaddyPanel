@@ -546,7 +546,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
 
         flush_interval -1
         transport http {
-            keepalive_idle <ka_idle>
+            keepalive <ka_idle>
             keepalive_interval <ka_interval>
         }
 
@@ -562,7 +562,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
         content: full Caddyfile text.
         upstream: upstream address to match (first argument of the directive).
         flush: inject ``flush_interval -1`` when True.
-        ka_idle: keepalive_idle value for the http transport.
+        ka_idle: keepalive value for the http transport (idle timeout).
         ka_interval: keepalive_interval value for the http transport.
 
     Returns:
@@ -575,6 +575,12 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
     """
     if not isinstance(upstream, str) or not upstream or re.search(r'[\s{}#]', upstream):
         return content, "error"
+
+    # Migrate the legacy 'keepalive_idle' transport subdirective: it is not a
+    # valid Caddyfile token (rejected by 'caddy validate', Caddy >= 2.9) and
+    # was silently renamed to 'keepalive'. Line-start anchored so comments and
+    # nested tokens are never touched.
+    content = re.sub(r'(?m)^([ \t]*)keepalive_idle([ \t]+)', r'\g<1>keepalive\g<2>', content)
 
     plans = []          # per-match action, applied later in reverse order
     changed_possible = False
@@ -627,7 +633,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
             if flush:
                 lines.append(f"{inner_indent}flush_interval -1")
             lines.append(f"{inner_indent}transport http {{")
-            lines.append(f"{_child_indent(inner_indent)}keepalive_idle {ka_idle}")
+            lines.append(f"{_child_indent(inner_indent)}keepalive {ka_idle}")
             lines.append(f"{_child_indent(inner_indent)}keepalive_interval {ka_interval}")
             lines.append(inner_indent + "}")
             lines.append(base_indent + "}")
@@ -655,7 +661,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
             header = body[t_start:t_brace].split()
             if len(header) >= 2 and header[1] == 'http':
                 t_body = body[t_brace + 1:t_close]
-                cur_idle = _get_depth0_directive_value(t_body, 'keepalive_idle')
+                cur_idle = _get_depth0_directive_value(t_body, 'keepalive')
                 cur_int = _get_depth0_directive_value(t_body, 'keepalive_interval')
                 if ((cur_idle is not None and cur_idle != ka_idle)
                         or (cur_int is not None and cur_int != ka_interval)):
@@ -687,7 +693,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
         if need_transport_block:
             edits.append((close_line_pos, (
                 f"{indent}transport http {{\n"
-                f"{_child_indent(indent)}keepalive_idle {ka_idle}\n"
+                f"{_child_indent(indent)}keepalive {ka_idle}\n"
                 f"{_child_indent(indent)}keepalive_interval {ka_interval}\n"
                 f"{indent}}}\n"
             )))
@@ -697,7 +703,7 @@ def harden_reverse_proxy_in_site(content, upstream, flush=True,
             t_indent = _indent_of(t_body, fallback=_child_indent(indent))
             t_pos = _line_start_before(t_body, len(t_body)) + t_brace + 1
             if cur_idle is None:
-                edits.append((t_pos, f"{t_indent}keepalive_idle {ka_idle}\n"))
+                edits.append((t_pos, f"{t_indent}keepalive {ka_idle}\n"))
             if cur_int is None:
                 edits.append((t_pos, f"{t_indent}keepalive_interval {ka_interval}\n"))
         plans.append(('block', body_start, close_abs, edits))

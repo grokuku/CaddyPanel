@@ -682,7 +682,7 @@ function generateCaddyfileBlock(site) {
             if (skipVerify || kaIdle || kaInterval) {
                 blockContent += `\t\ttransport http {\n`;
                 if (skipVerify) blockContent += `\t\t\ttls_insecure_skip_verify\n`;
-                if (kaIdle) blockContent += `\t\t\tkeepalive_idle ${kaIdle}\n`;
+                if (kaIdle) blockContent += `\t\t\tkeepalive ${kaIdle}\n`; // NOTE: 'keepalive_idle' is not a valid Caddyfile subdirective (Caddy >= 2.9)
                 if (kaInterval) blockContent += `\t\t\tkeepalive_interval ${kaInterval}\n`;
                 blockContent += `\t\t}\n`;
             }
@@ -750,9 +750,11 @@ function generateCaddyfileFromData() {
             const indentedContent = customContentWithMarker.split('\n').map(line => `\t${line}`).join('\n');
             caddyfileContent += `${indentedContent}\n`;
         } else {
+            // generateCaddyfileBlock already tab-indents every line relative to
+            // the site block (only the first line is trimmed): prepend a single
+            // tab instead of re-indenting each line (which doubled indentation).
             const standardContent = generateCaddyfileBlock(site);
-            const indentedContent = standardContent.split('\n').map(line => `\t${line}`).join('\n');
-            caddyfileContent += `${indentedContent}\n`;
+            caddyfileContent += `\t${standardContent}\n`;
         }
 
         caddyfileContent += `}\n\n`;
@@ -774,7 +776,9 @@ async function autoSaveAndReloadCaddy() {
             });
             const saveData = await saveResponse.json();
             if (!saveResponse.ok || saveData.status !== 'success') {
-                throw new Error(saveData.message || `Failed to save Caddyfile (HTTP ${saveData.status})`);
+                let errorMsg = saveData.message || `Failed to save Caddyfile (HTTP ${saveResponse.status})`;
+                if (saveData.details) errorMsg += ` Details: ${saveData.details}`;
+                throw new Error(errorMsg);
             }
             showToast(`Caddyfile saved. Reloading Caddy...`, "info", 10000);
             const reloadResponse = await fetch('/api/caddy/reload', {

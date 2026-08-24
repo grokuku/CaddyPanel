@@ -746,7 +746,7 @@ def test_harden_site_happy_path(client, monkeypatch):
     text = Path(os.environ['CADDY_CONFIG']).read_text(encoding='utf-8')
     assert 'flush_interval -1' in text
     assert 'transport http {' in text
-    assert 'keepalive_idle 5m' in text and 'keepalive_interval 30s' in text
+    assert 'keepalive 5m' in text and 'keepalive_interval 30s' in text
 
     # Already hardened -> no-op reported, file untouched.
     before = text

@@ -37,6 +37,9 @@ LicenseKey ${MAXMIND_LICENSE_KEY}
 EditionIDs GeoLite2-Country
 DatabaseDirectory ${APP_DATA_DIR}
 GEOIPCONF
+        # GeoIP.conf contains the MaxMind LicenseKey in clear text:
+        # restrict permissions during its brief lifetime.
+        chmod 600 "${APP_DATA_DIR}/GeoIP.conf"
         if geoipupdate -f "${APP_DATA_DIR}/GeoIP.conf" -d "${APP_DATA_DIR}"; then
             if [ -f "$GEOIP_DB_PATH" ]; then
                 echo "GeoIP: database downloaded via geoipupdate to $GEOIP_DB_PATH"
@@ -46,6 +49,8 @@ GEOIPCONF
         else
             echo "WARNING: geoipupdate failed. Falling back to HTTP download."
         fi
+        # Purge the credentials file whether geoipupdate succeeded or failed.
+        rm -f "${APP_DATA_DIR}/GeoIP.conf"
     fi
     # Strategy 2: if geoipupdate didn't work or isn't available, try HTTP
     if [ ! -f "$GEOIP_DB_PATH" ]; then

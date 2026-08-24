@@ -668,7 +668,7 @@ def test_harden_reverse_proxy_simple_single_line():
         "    reverse_proxy localhost:8080 {\n"
         "        flush_interval -1\n"
         "        transport http {\n"
-        "            keepalive_idle 5m\n"
+        "            keepalive 5m\n"
         "            keepalive_interval 30s\n"
         "        }\n"
         "    }\n"
@@ -688,13 +688,33 @@ def test_harden_reverse_proxy_multiline_block():
     assert status == "updated"
     assert "lb_policy round_robin" in new_content           # preserved
     assert "flush_interval -1" in new_content
-    assert "keepalive_idle 5m" in new_content
+    assert "keepalive 5m" in new_content
     assert "keepalive_interval 30s" in new_content
     assert new_content.count("reverse_proxy") == 1           # not duplicated
 
 
 def test_harden_reverse_proxy_already_hardened_is_noop():
     hardened = (
+        "app.example.com {\n"
+        "    reverse_proxy localhost:8080 {\n"
+        "        flush_interval -1\n"
+        "        transport http {\n"
+        "            keepalive 5m\n"
+        "            keepalive_interval 30s\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+    new_content, status = harden_reverse_proxy_in_site(
+        hardened, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "unchanged"
+    assert new_content == hardened
+
+
+def test_harden_reverse_proxy_migrates_legacy_keepalive_idle_token():
+    # 'keepalive_idle' was never a valid Caddyfile subdirective (Caddy >= 2.9
+    # rejects it); hardening must migrate it to the valid 'keepalive' form.
+    content = (
         "app.example.com {\n"
         "    reverse_proxy localhost:8080 {\n"
         "        flush_interval -1\n"
@@ -706,9 +726,10 @@ def test_harden_reverse_proxy_already_hardened_is_noop():
         "}\n"
     )
     new_content, status = harden_reverse_proxy_in_site(
-        hardened, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
-    assert status == "unchanged"
-    assert new_content == hardened
+        content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
+    assert status == "unchanged"   # values already correct after migration
+    assert "keepalive_idle" not in new_content
+    assert "keepalive 5m" in new_content and "keepalive_interval 30s" in new_content
 
 
 def test_harden_reverse_proxy_partial_transport_adds_missing_keys():
@@ -726,7 +747,7 @@ def test_harden_reverse_proxy_partial_transport_adds_missing_keys():
     assert status == "updated"
     assert "flush_interval -1" in new_content
     assert new_content.count("transport http {") == 1        # not duplicated
-    assert "keepalive_idle 5m" in new_content
+    assert "keepalive 5m" in new_content
     assert "keepalive_interval 30s" in new_content
 
 
@@ -750,8 +771,9 @@ def test_harden_reverse_proxy_conflict_keeps_existing_transport_values():
     new_content, status = harden_reverse_proxy_in_site(
         content, "localhost:8080", flush=True, ka_idle="5m", ka_interval="30s")
     assert status == "conflict"
-    assert new_content == content   # nothing modified
-    assert "keepalive_idle 2m" in new_content
+    # Only the legacy token name is migrated; existing values are untouched.
+    assert new_content == content.replace("keepalive_idle", "keepalive")
+    assert "keepalive 2m" in new_content
 
 
 def test_harden_reverse_proxy_invalid_upstream_is_error():
@@ -778,5 +800,5 @@ def test_harden_reverse_proxy_handles_multiple_sites_and_flush_disabled():
         content, "app:3000", flush=False, ka_idle="7m", ka_interval="60s")
     assert status == "updated"
     assert "flush_interval" not in new_content               # flush disabled
-    assert new_content.count("keepalive_idle 7m") == 2       # both occurrences
+    assert new_content.count("keepalive 7m") == 2           # both occurrences
     assert new_content.count("keepalive_interval 60s") == 2

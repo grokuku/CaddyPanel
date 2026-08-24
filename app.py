@@ -1042,28 +1042,17 @@ def get_stats():
         stats_data = stats_aggregator._empty_stats(period, host)
         stats_data["log_read_error"] = f"Server error retrieving stats: {e}"
 
-    # If no data at all, try auto-configuring Caddy logging
+    # If no data at all, return a read-only diagnostic. This is a GET route:
+    # it must NEVER modify the Caddyfile nor reload Caddy as a side effect.
+    # Explicit configuration must go through POST /api/caddyfile/configure_logging.
     if not stats_data["log_read_error"] and not stats_aggregator.has_data():
-        logging_configured = False
         if not app.config['CADDY_ACCESS_LOG_FILE'].exists():
-            # Try to auto-configure logging in the Caddyfile
-            try:
-                result = _configure_caddyfile_logging_internal()
-                if result.get("status") in ("success", "warning"):
-                    stats_data["log_read_error"] = (
-                        "Logging was not configured. Auto-configured JSON logging in Caddyfile. "
-                        "Stats will appear after Caddy generates new log entries."
-                    )
-                    logging_configured = True
-            except Exception as e:
-                logger.error(f"Auto-configure logging attempt failed: {e}")
-
-        if not logging_configured and not app.config['CADDY_ACCESS_LOG_FILE'].exists():
             stats_data["log_read_error"] = (
                 f"Log file {app.config['CADDY_ACCESS_LOG_FILE']} not found. "
-                "Configure Caddy for JSON logging to stdout."
+                "Configure Caddy for JSON logging to stdout via the "
+                "'Configure logging' action (POST /api/caddyfile/configure_logging)."
             )
-        elif not logging_configured and stats_data["total_requests"] == 0:
+        elif stats_data["total_requests"] == 0:
             stats_data["log_read_error"] = (
                 "No processable log entries found. "
                 "Check that Caddy is configured for JSON logging."
@@ -1093,7 +1082,7 @@ def _configure_caddyfile_logging_internal():
     """Internal: add/modify global log config in Caddyfile for JSON stdout logging,
     and ensure every site block has a 'log' directive so access logs are emitted.
     Returns a dict with 'status' and 'message' keys (no HTTP status code).
-    Does NOT require request context - can be called from the stats API."""
+    Only invoked from explicit POST endpoints - never from GET routes."""
     result = _configure_caddyfile_logging_impl(str(CADDY_CONFIG_FILE))
     if result.get("status") == "error":
         return result
