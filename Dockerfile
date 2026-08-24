@@ -1,5 +1,7 @@
 # --- Stage 1: Caddy Builder ---
-FROM python:3.10-slim-bullseye AS caddy_builder
+# Runs on the BUILD platform (no QEMU emulation): we only download a
+# prebuilt static binary, which is selected via TARGETARCH below.
+FROM --platform=$BUILDPLATFORM python:3.10-slim-bullseye AS caddy_builder
 
 ARG CADDY_VERSION=2.10.0
 # TARGETARCH is automatically provided by Docker Buildx (e.g., amd64, arm64)
@@ -31,7 +33,12 @@ RUN \
     chmod +x /usr/local/bin/caddy
 
 # --- Stage 2: GeoIP updater binary ---
-FROM python:3.10-slim-bullseye AS geoip_builder
+# Runs on the BUILD platform ($BUILDPLATFORM) to avoid QEMU emulation
+# (segfaults in dpkg post-inst under linux/arm64). We only download a
+# prebuilt static binary here; TARGETARCH (declared below) still selects
+# the binary matching the TARGET platform, so the final stage gets the
+# correct architecture.
+FROM --platform=$BUILDPLATFORM python:3.10-slim-bullseye AS geoip_builder
 
 ARG TARGETARCH
 # Download geoipupdate binary from MaxMind GitHub releases
