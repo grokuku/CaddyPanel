@@ -3,7 +3,7 @@
 # prebuilt static binary, which is selected via TARGETARCH below.
 FROM --platform=$BUILDPLATFORM python:3.10-slim-bullseye AS caddy_builder
 
-ARG CADDY_VERSION=2.10.0
+ARG CADDY_VERSION=2.11.4
 # TARGETARCH is automatically provided by Docker Buildx (e.g., amd64, arm64)
 ARG TARGETARCH
 

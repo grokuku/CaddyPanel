@@ -221,7 +221,7 @@ CaddyPanel can harden proxy connections for streaming workloads. Defaults live i
 | `globalServersIdleTimeout` | `10m` | Global `servers { timeouts { idle … } }` value |
 | `globalKeepAliveInterval` | `30s` | Global `servers { keepalive_interval … }` value |
 | `siteFlushIntervalEnabled` | `true` | Inject `flush_interval -1` in generated/hardened `reverse_proxy` blocks |
-| `siteTransportKeepAliveIdle` | `5m` | `transport http { keepalive_idle … }` for generated/hardened sites |
+| `siteTransportKeepAliveIdle` | `5m` | `transport http { keepalive … }` for generated/hardened sites |
 | `siteTransportKeepAliveInterval` | `30s` | `transport http { keepalive_interval … }` for generated/hardened sites |
 
 Endpoints (POST, JSON body, session + CSRF token required). Existing different values on disk are **never overwritten**:
