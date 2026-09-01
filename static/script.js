@@ -607,7 +607,7 @@ async function saveSiteFromModal() {
         const customContent = modalCustomContentTextarea.value.trim();
         if (!customContent) { showToast("Custom configuration content cannot be empty.", "warning"); return; }
         siteData.is_custom = true;
-        siteData.custom_content = customContent;
+        siteData.custom_content = normalizeCustomIndentation(unwrapSiteBlockIfNeeded(customContent));
     } else {
         const standardData = collectStandardModalData();
         siteData = { ...siteData, ...standardData, is_custom: false, custom_content: null };
@@ -660,6 +660,86 @@ function handleModalAuthentikCheckboxChange(event) {
         if (!copyHeadersInput.value) copyHeadersInput.value = currentPreferences.defaultAuthentikCopyHeaders || DEFAULT_AUTHENTIK_COPY_HEADERS;
         if (!trustedProxiesInput.value) trustedProxiesInput.value = currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges';
     }
+}
+
+// --- Custom config helpers ---
+// The custom textarea expects only the DIRECTIVES that go INSIDE the site block.
+// The panel wraps them in `${site.address} { ... }`. If a user pastes a full site
+// block (e.g. "example.com { ... }") — which would otherwise nest the address
+// inside its own block and fail with "unrecognized directive: <address>" —
+// strip the outer wrapper and keep only the body.
+function unwrapSiteBlockIfNeeded(content) {
+    const lines = content.split('\n');
+    const firstIdx = lines.findIndex(l => l.trim() !== '');
+    if (firstIdx === -1) return content;
+    const firstLine = lines[firstIdx].trim();
+    // Does it look like a site-block opener ("<address> {")?
+    if (!/^\S[^\n{]*\{\s*$/.test(firstLine)) return content;
+    const firstToken = firstLine.split(/\s+/)[0].toLowerCase();
+    // Known block-form directives / matchers are valid INSIDE a site block and
+    // must never be treated as an outer site block.
+    const knownDirectives = new Set(['log', 'tls', 'forward_auth', 'try_files', 'handle', 'route',
+        'request_header', 'response_header', 'handle_errors', 'encode', 'redir', 'rewrite',
+        'uri', 'vars', 'import', 'acme_dns', 'auto_https', 'on_demand_tls', 'local_certs', 'skip_log',
+        'basicauth', 'basic_auth', 'jwt', 'oidc', 'ip_match', 'remote_ip', 'client_ip', 'method', 'path',
+        'path_regexp', 'query', 'expression', 'not', 'abort', 'error', 'respond', 'reverse_proxy',
+        'php_fastcgi', 'file_server', 'root', 'templates', 'markdown', 'push', 'metrics', 'pprof',
+        'health_check', 'header', 'map', 'request_body', 'acme_server', 'handle_path', 'tracing']);
+    if (knownDirectives.has(firstToken) || firstToken.startsWith('@')) return content;
+    // First '{' opens the outer site block; extract everything up to its match.
+    const braceIdx = content.indexOf('{');
+    if (braceIdx === -1) return content;
+    let depth = 0;
+    for (let i = braceIdx; i < content.length; i++) {
+        if (content[i] === '{') depth++;
+        else if (content[i] === '}') {
+            depth--;
+            if (depth === 0) {
+                const body = content.substring(braceIdx + 1, i).trim();
+                return body || content;
+            }
+        }
+    }
+    return content;
+}
+
+// Normalize the indentation of pasted custom content so the generated Caddyfile
+// is consistent regardless of whether the user pasted tabs, spaces, or a mix.
+// Caddy itself is not sensitive to indentation, but a clean, tab-indented body
+// avoids cosmetic inconsistencies (e.g. after unwrapSiteBlockIfNeeded the first
+// line sits at column 0 while the rest keep their original spaces).
+//
+// Strategy: find the reference indentation (the smallest leading whitespace of
+// any non-empty line), strip it from every line, then re-indent the remaining
+// relative depth with tabs (1 tab per level, 4 spaces per level). This preserves
+// the RELATIVE nesting of blocks while making the absolute indentation uniform.
+function normalizeCustomIndentation(content) {
+    const lines = content.split('\n');
+    // Reference indentation = minimum leading whitespace among non-empty lines.
+    // May be '' (first line at column 0) — that is still a valid reference.
+    let refIndent = null;
+    for (const line of lines) {
+        if (line.trim() === '') continue;
+        const lead = line.match(/^[ \t]*/)[0];
+        if (refIndent === null || lead.length < refIndent.length) refIndent = lead;
+        if (lead.length === 0) break; // cannot get smaller than zero
+    }
+    if (refIndent === null) return content; // no non-empty lines
+    const out = lines.map(line => {
+        if (line.trim() === '') return '';
+        let rest = line;
+        if (rest.startsWith(refIndent)) rest = rest.slice(refIndent.length);
+        const lead = rest.match(/^[ \t]*/)[0];
+        const body = rest.slice(lead.length);
+        // Convert remaining leading whitespace to tabs (1 tab per level).
+        let depth = 0;
+        for (const ch of lead) {
+            if (ch === '\t') depth += 1;
+            else depth += 0.25; // 4 spaces per level
+        }
+        return '\t'.repeat(Math.round(depth)) + body;
+    });
+    return out.join('\n');
 }
 
 // --- Caddyfile Generation (from siteConfigs array) ---
@@ -746,7 +826,7 @@ function generateCaddyfileFromData() {
         caddyfileContent += `${site.address} {\n`;
         
         if (site.is_custom) {
-            const customContentWithMarker = "# CADDYPANEL_CUSTOM_CONFIG\n" + (site.custom_content || '');
+            const customContentWithMarker = "# CADDYPANEL_CUSTOM_CONFIG\n" + normalizeCustomIndentation(site.custom_content || '');
             const indentedContent = customContentWithMarker.split('\n').map(line => `\t${line}`).join('\n');
             caddyfileContent += `${indentedContent}\n`;
         } else {
