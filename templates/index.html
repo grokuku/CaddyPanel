@@ -38,9 +38,9 @@
 
     <div class="tab-container">
         <div class="tab-buttons">
-            <button class="tab-button active" onclick="openTab(event, 'configurator-tab')">Configurator</button>
-            <button class="tab-button" onclick="openTab(event, 'raw-caddyfile-tab')">Raw Caddyfile</button>
-            <button class="tab-button" onclick="openTab(event, 'preferences-tab')">Preferences</button>
+            <button class="tab-button active" data-tab="configurator-tab">Configurator</button>
+            <button class="tab-button" data-tab="raw-caddyfile-tab">Raw Caddyfile</button>
+            <button class="tab-button" data-tab="preferences-tab">Preferences</button>
         </div>
 
         <!-- Configurator Tab Content -->
@@ -233,41 +233,6 @@
     </div>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
-    <script>
-        function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
-            tablinks = document.getElementsByClassName("tab-button");
-            for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
-            const targetTab = document.getElementById(tabName);
-            if (targetTab) { targetTab.style.display = "block"; }
-            if (evt && evt.currentTarget) { evt.currentTarget.className += " active"; }
-        }
-        document.addEventListener('DOMContentLoaded', function() {
-            const firstTabButton = document.querySelector('.tab-buttons .tab-button');
-            if (firstTabButton && !document.querySelector('.tab-buttons .tab-button.active')) {
-                const configuratorTab = document.getElementById('configurator-tab');
-                if (configuratorTab && firstTabButton.innerText.trim().toLowerCase() === 'configurator') { 
-                    configuratorTab.style.display = 'block';
-                    firstTabButton.classList.add('active');
-                }
-            }
-
-            const flashMessagesList = document.querySelector('ul.flash-messages-to-toast');
-            if (flashMessagesList && typeof showToast === 'function') { 
-                const messages = flashMessagesList.querySelectorAll('li');
-                messages.forEach(li => {
-                    const category = li.dataset.category || 'info';
-                    const message = li.dataset.message;
-                    if (message) {
-                        const toastType = category === 'danger' ? 'error' : category;
-                        showToast(message, toastType, toastType === 'error' ? 8000 : 5000);
-                    }
-                });
-            }
-        });
-    </script>
 
     <!-- Change Password Modal -->
     <div id="change-password-modal" class="modal" style="display: none;">

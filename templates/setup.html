@@ -70,11 +70,6 @@
             <button type="submit">Create Admin</button>
         </form>
     </div>
-    <script>
-    (function() {
-        var theme = localStorage.getItem('caddyPanelTheme');
-        if (theme) document.body.className = 'auth-page ' + theme;
-    })();
-    </script>
+    <script src="{{ url_for('static', filename='auth-theme.js') }}"></script>
 </body>
 </html>

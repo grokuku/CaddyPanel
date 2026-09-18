@@ -277,9 +277,49 @@ if (siteModal) {
 if (modalSwitchToCustomBtn) modalSwitchToCustomBtn.addEventListener('click', () => toggleModalMode('custom'));
 if (modalSwitchToStandardBtn) modalSwitchToStandardBtn.addEventListener('click', () => toggleModalMode('standard'));
 
+// --- Tab Navigation (externalized from inline onclick handlers) ---
+function openTab(evt, tabName) {
+    var i, tabcontent, tablinks;
+    tabcontent = document.getElementsByClassName("tab-content");
+    for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
+    tablinks = document.getElementsByClassName("tab-button");
+    for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
+    const targetTab = document.getElementById(tabName);
+    if (targetTab) { targetTab.style.display = "block"; }
+    if (evt && evt.currentTarget) { evt.currentTarget.className += " active"; }
+}
+
+document.querySelectorAll('.tab-buttons .tab-button').forEach(btn => {
+    btn.addEventListener('click', (evt) => openTab(evt, btn.dataset.tab));
+});
+
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', async () => {
+    // Default to the Configurator tab if no tab is active yet.
+    const firstTabButton = document.querySelector('.tab-buttons .tab-button');
+    if (firstTabButton && !document.querySelector('.tab-buttons .tab-button.active')) {
+        const configuratorTab = document.getElementById('configurator-tab');
+        if (configuratorTab && firstTabButton.innerText.trim().toLowerCase() === 'configurator') {
+            configuratorTab.style.display = 'block';
+            firstTabButton.classList.add('active');
+        }
+    }
+
+    // Convert any server-rendered flash messages into toasts.
+    const flashMessagesList = document.querySelector('ul.flash-messages-to-toast');
+    if (flashMessagesList && typeof showToast === 'function') {
+        const messages = flashMessagesList.querySelectorAll('li');
+        messages.forEach(li => {
+            const category = li.dataset.category || 'info';
+            const message = li.dataset.message;
+            if (message) {
+                const toastType = category === 'danger' ? 'error' : category;
+                showToast(message, toastType, toastType === 'error' ? 8000 : 5000);
+            }
+        });
+    }
+
     // Apply the stored theme first, otherwise the one from the select, otherwise the CSS default.
     const initialStoredTheme = localStorage.getItem('caddyPanelTheme');
     if (initialStoredTheme) {
@@ -1270,7 +1310,7 @@ async function handleParseRawTextAndAutoSave() {
     try {
         parseCaddyfile(rawContent);
         showToast('Parsed successfully! Configurator updated. Saving and reloading...', 'success');
-        const configTabButton = document.querySelector('.tab-buttons button[onclick*="configurator-tab"]'); 
+        const configTabButton = document.querySelector('.tab-buttons button[data-tab="configurator-tab"]'); 
         if (configTabButton) { configTabButton.click(); } // Switch to the configurator tab
         await autoSaveAndReloadCaddy(); 
     } catch (error) {
