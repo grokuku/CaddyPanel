@@ -7,6 +7,8 @@
     <title>Statistics - CaddyPanel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="{{ url_for('static', filename='holaf-icons.js') }}"></script>
+    <script src="{{ url_for('static', filename='holaf-fetch.js') }}"></script>
+    <script src="{{ url_for('static', filename='holaf-toast.js') }}"></script>
     <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
 
     <script src="{{ url_for('static', filename='vendor/d3.min.js') }}"></script>
@@ -147,7 +149,13 @@
         }
         .countries-list li:last-child { border-bottom: none; }
         .country-label { display: flex; align-items: center; gap: 6px; color: var(--text-primary); }
+        /* Country flags are KEPT as emoji on purpose (they render on the
+           target Linux host). The SVG below is only the FALLBACK used when the
+           country code is unknown/invalid (HolafIcons "globe"). Sized in `em`
+           so the globe matches the emoji and the column stays aligned, rather
+           than the 24px default of HolafIcons.buildSvg. */
         .country-flag { font-size: 1.05em; }
+        .country-flag svg { width: 1em; height: 1em; vertical-align: -0.125em; }
         .country-value { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
         .country-bar-bg { width: 50px; height: 4px; background: var(--bg-elevated); border-radius: 2px; margin-left: 6px; overflow: hidden; }
         .country-bar { height: 4px; background: var(--accent); border-radius: 2px; transition: width 0.4s; }
@@ -212,7 +220,6 @@
     </style>
 </head>
 <body>
-    <div id="toast-container"></div>
     <div class="stats-root">
         <!-- Header -->
         <div class="stats-header">

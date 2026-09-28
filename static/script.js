@@ -33,8 +33,6 @@ Technical choices:
 */
 
 // --- DOM Elements ---
-const toastContainer = document.getElementById('toast-container');
-
 const outputTextarea = document.getElementById('caddyfile-output');
 const themeSelect = document.getElementById('theme-select');
 const savePrefsBtn = document.getElementById('save-prefs-btn');
@@ -49,21 +47,15 @@ const importCaddyfileInput = document.getElementById('import-caddyfile-input');
 // Configurator Tab Elements
 const addHostBtn = document.getElementById('add-host-btn');
 const sitesTableBody = document.getElementById('sites-table-body');
-// Modal Elements
-const siteModal = document.getElementById('site-modal');
-const modalTitle = document.getElementById('modal-title');
-const modalForm = document.getElementById('modal-form');
-const modalSiteIndexInput = document.getElementById('modal-site-index');
-const modalSaveBtn = document.getElementById('modal-save-btn');
-const modalCancelBtn = document.getElementById('modal-cancel-btn');
-const closeModalBtn = siteModal ? siteModal.querySelector('.close-modal-btn') : null;
-
-// Modal Config Mode Elements
-const modalStandardConfigDiv = document.getElementById('modal-standard-config');
-const modalCustomConfigDiv = document.getElementById('modal-custom-config');
-const modalSwitchToCustomBtn = document.getElementById('modal-switch-to-custom-btn');
-const modalSwitchToStandardBtn = document.getElementById('modal-switch-to-standard-btn');
-const modalCustomContentTextarea = document.getElementById('modal-custom-content');
+// Modal Elements — the site modal's shell and footer are rendered by
+// HolafModal; its form is cloned from #site-modal-template on each open
+// (see openSiteModal). Same pattern for the Change Password modal.
+const siteModalTemplate = document.getElementById('site-modal-template');
+const changePasswordTemplate = document.getElementById('change-password-template');
+let siteModalContent = null;   // current cloned <form id="modal-form">
+let siteModalCtrl = null;      // active HolafModal controller (site modal)
+let changePwdContent = null;   // current cloned <form id="change-password-form">
+let changePwdCtrl = null;      // active HolafModal controller (password modal)
 
 // Preference Form Fields
 const globalAdminEmailInput = document.getElementById('global-admin-email');
@@ -98,42 +90,64 @@ let _saveChain = Promise.resolve();
 
 // --- Toast Notification System ---
 function showToast(message, type = 'info', duration = 3000) {
-    if (!toastContainer) {
-        console.error("Toast container not found!");
-        alert(`${type.toUpperCase()}: ${message}`);
-        return;
-    }
-
-    const toast = document.createElement('div');
-    toast.className = `toast ${type === 'error' ? 'danger' : type}`;
-
-    const messageSpan = document.createElement('span');
-    messageSpan.className = 'toast-message';
-    messageSpan.textContent = message;
-    toast.appendChild(messageSpan);
-
-    const closeButton = document.createElement('button');
-    closeButton.className = 'toast-close-btn';
-    closeButton.innerHTML = '×';
-    closeButton.setAttribute('aria-label', 'Close');
-    closeButton.onclick = () => {
-        toast.classList.remove('show');
-        setTimeout(() => {
-            if (toast.parentNode === toastContainer) {
-                    toastContainer.removeChild(toast);
-            }
-        }, 500);
-    };
-    toast.appendChild(closeButton);
-    toastContainer.appendChild(toast);
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => { if (toast.classList.contains('show')) closeButton.click(); }, duration);
+    // CaddyPanel historically used "danger" for errors; HolafToast speaks
+    // "error" (types: info/success/warning/error). Normalize so error toasts
+    // keep their red styling and alert icon.
+    HolafToast.show({
+        message,
+        type: type === 'danger' ? 'error' : type,
+        duration
+    });
 }
 
 
 // --- CSRF Token Helper ---
 function getCsrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
+// --- API helper (HolafFetch + CaddyPanel contract) ---
+// HolafFetch throws a HolafFetchError on ANY non-2xx status and builds its
+// message from body.error then body.detail. The CaddyPanel API instead returns
+// {status, message, details}. This thin adapter restores the (ok, payload)
+// shape the historical code expects (payload = the parsed {status, message,
+// details} object) so error toasts keep showing the server message/details.
+// Transport-level failures (network/timeout/non-JSON page) are re-thrown so the
+// existing catch blocks keep reporting err.message exactly as before.
+async function apiFetch(url, opts = {}) {
+    try {
+        const payload = await HolafFetch.request(url, opts);
+        return { ok: true, status: 200, payload };
+    } catch (err) {
+        if (err && err.name === 'HolafFetchError' && err.status && err.data) {
+            return { ok: false, status: err.status, payload: err.data };
+        }
+        throw err;
+    }
+}
+
+// Build a CaddyPanel-style error message: server `message` first, then append
+// `details` when present (identical to the pre-migration toast content).
+function apiErrorMessage(payload, fallback) {
+    let msg = (payload && payload.message) || fallback;
+    if (payload && payload.details) msg += ` Details: ${payload.details}`;
+    return msg;
+}
+
+// Map the CaddyPanel theme (body class) to a HolafModal preset so the modal
+// shell matches the page's light/dark mode.
+function modalTheme() {
+    return Array.from(document.body.classList).some(c => c.startsWith('theme-dark-')) ? 'dark' : 'light';
+}
+
+// Set the GeoIP status line as a HolafIcons status glyph + plain text.
+// The SVG markup comes from the trusted, static HolafIcons constants (never
+// server data); the message is appended as a text node so a server-provided
+// string is displayed literally and never parsed as HTML.
+function setGeoipStatus(iconName, message) {
+    if (!geoipStatusText) return;
+    geoipStatusText.innerHTML = HolafIcons.render(iconName, { size: 14, class: 'geoip-status-icon' });
+    if (message) geoipStatusText.appendChild(document.createTextNode(' ' + message));
 }
 
 // --- Event Listeners ---
@@ -160,18 +174,18 @@ if (savePrefsBtn) {
             downloadGeoipBtn.textContent = 'Downloading...';
             if (geoipStatusText) geoipStatusText.textContent = 'Downloading GeoIP database...';
             try {
-                const res = await fetch('/api/geoip/download', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
-                const result = await res.json();
-                if (result.status === 'success') {
+                const resp = await apiFetch('/api/geoip/download', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
+                const result = resp.payload || {};
+                if (resp.ok && result.status === 'success') {
                     showToast(result.message, 'success');
-                    if (geoipStatusText) geoipStatusText.textContent = '✓ GeoIP active';
+                    setGeoipStatus('check', 'GeoIP active');
                 } else {
-                    showToast(result.message, 'error', 8000);
-                    if (geoipStatusText) geoipStatusText.textContent = '✗ ' + result.message;
+                    showToast(apiErrorMessage(result, 'Download failed.'), 'error', 8000);
+                    setGeoipStatus('x', result.message || 'Download failed');
                 }
             } catch (err) {
                 showToast('Download failed: ' + err.message, 'error');
-                if (geoipStatusText) geoipStatusText.textContent = '✗ Download failed';
+                setGeoipStatus('x', 'Download failed');
             } finally {
                 downloadGeoipBtn.disabled = false;
                 downloadGeoipBtn.textContent = 'Download GeoIP Database';
@@ -200,18 +214,18 @@ if (savePrefsBtn) {
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                const res = await fetch('/api/geoip/upload', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() }, body: formData });
-                const result = await res.json();
-                if (result.status === 'success') {
+                const resp = await apiFetch('/api/geoip/upload', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() }, body: formData });
+                const result = resp.payload || {};
+                if (resp.ok && result.status === 'success') {
                     showToast(result.message, 'success');
-                    if (geoipStatusText) geoipStatusText.textContent = '✓ GeoIP active';
+                    setGeoipStatus('check', 'GeoIP active');
                 } else {
-                    showToast(result.message, 'error', 8000);
-                    if (geoipStatusText) geoipStatusText.textContent = '✗ Upload failed';
+                    showToast(apiErrorMessage(result, 'Upload failed.'), 'error', 8000);
+                    setGeoipStatus('x', 'Upload failed');
                 }
             } catch (err) {
                 showToast('Upload failed: ' + err.message, 'error');
-                if (geoipStatusText) geoipStatusText.textContent = '✗ Upload failed';
+                setGeoipStatus('x', 'Upload failed');
             }
             geoipFileUpload.value = '';
         });
@@ -226,18 +240,18 @@ if (savePrefsBtn) {
             testGeoipBtn.disabled = true; testGeoipBtn.textContent = 'Testing...';
             if (geoipStatusText) geoipStatusText.textContent = 'Testing credentials...';
             try {
-                const res = await fetch('/api/geoip/test', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
-                const result = await res.json();
-                if (result.status === 'success') {
+                const resp = await apiFetch('/api/geoip/test', { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
+                const result = resp.payload || {};
+                if (resp.ok && result.status === 'success') {
                     showToast(result.message, 'success');
-                    if (geoipStatusText) geoipStatusText.textContent = '✓ Credentials valid';
+                    setGeoipStatus('check', 'Credentials valid');
                 } else {
-                    showToast(result.message, 'error', 12000);
-                    if (geoipStatusText) geoipStatusText.textContent = '✗ Invalid credentials';
+                    showToast(apiErrorMessage(result, 'Test failed.'), 'error', 12000);
+                    setGeoipStatus('x', 'Invalid credentials');
                 }
             } catch (err) {
                 showToast('Test failed: ' + err.message, 'error');
-                if (geoipStatusText) geoipStatusText.textContent = '✗ Connection failed';
+                setGeoipStatus('x', 'Connection failed');
             } finally {
                 testGeoipBtn.disabled = false; testGeoipBtn.textContent = 'Test Connection';
             }
@@ -263,19 +277,8 @@ if (sitesTableBody) {
     sitesTableBody.addEventListener('click', handleTableActionClick);
     sitesTableBody.addEventListener('change', handleTableCheckboxChange);
 }
-// Modal Listeners
-if (closeModalBtn) closeModalBtn.addEventListener('click', closeSiteModal);
-if (modalCancelBtn) modalCancelBtn.addEventListener('click', closeSiteModal);
-if (modalSaveBtn) modalSaveBtn.addEventListener('click', saveSiteFromModal);
-if (siteModal) {
-    siteModal.addEventListener('click', (event) => { if (event.target === siteModal) closeSiteModal(); });
-    const modalContent = siteModal.querySelector('.modal-content');
-    if (modalContent) modalContent.addEventListener('click', handleModalToggleClick);
-    const modalAuthCheckbox = document.getElementById('modal-authentik-enable');
-    if (modalAuthCheckbox) modalAuthCheckbox.addEventListener('change', handleModalAuthentikCheckboxChange);
-}
-if (modalSwitchToCustomBtn) modalSwitchToCustomBtn.addEventListener('click', () => toggleModalMode('custom'));
-if (modalSwitchToStandardBtn) modalSwitchToStandardBtn.addEventListener('click', () => toggleModalMode('standard'));
+// Modal listeners are wired per-open on the cloned form (see openSiteModal);
+// the shell (close button, Escape, overlay click) is handled by HolafModal.
 
 // --- Tab Navigation (externalized from inline onclick handlers) ---
 function openTab(evt, tabName) {
@@ -440,7 +443,7 @@ function renderSitesTable() {
 
         cellActions.classList.add('actions');
         cellActions.innerHTML = `
-            <button type="button" class="action-btn stats-btn" title="View Stats (placeholder)">${HolafIcons.get('bar-chart')}</button>
+            <button type="button" class="action-btn stats-btn" title="View Stats">${HolafIcons.get('bar-chart')}</button>
             <button type="button" class="action-btn harden-btn" title="Harden: inject flush_interval -1 + keep-alive transport into the existing Caddyfile">${HolafIcons.get('shield')}</button>
             <button type="button" class="action-btn edit-btn" title="Edit">${HolafIcons.get('pencil')}</button>
             <button type="button" class="action-btn delete-btn" title="Delete">${HolafIcons.get('trash')}</button>
@@ -524,34 +527,83 @@ async function handleTableCheckboxChange(event) {
 
 
 // --- Modal Management ---
+// The site modal's shell/footer is rendered by HolafModal. On each open we
+// clone a fresh form from #site-modal-template, wire its delegated listeners,
+// then hand it to HolafModal as the modal content. All business logic
+// (populate / collect / save, Custom Config mode, Authentik toggle) is kept
+// unchanged.
 function toggleModalMode(mode) {
-    if (!modalStandardConfigDiv || !modalCustomConfigDiv) return;
+    const standardDiv = document.getElementById('modal-standard-config');
+    const customDiv = document.getElementById('modal-custom-config');
+    if (!standardDiv || !customDiv) return;
     if (mode === 'custom') {
         const currentSiteData = collectStandardModalData();
         // Generate a temporary Caddyfile content from standard fields to pre-fill the custom textarea
         const tempSiteConfig = { ...currentSiteData, is_custom: false }; // Force standard generation
         const generatedContent = generateCaddyfileBlock(tempSiteConfig);
         
-        modalCustomContentTextarea.value = generatedContent;
-        modalStandardConfigDiv.style.display = 'none';
-        modalCustomConfigDiv.style.display = 'block';
+        document.getElementById('modal-custom-content').value = generatedContent;
+        standardDiv.style.display = 'none';
+        customDiv.style.display = 'block';
     } else { // 'standard'
-        modalStandardConfigDiv.style.display = 'block';
-        modalCustomConfigDiv.style.display = 'none';
+        standardDiv.style.display = 'block';
+        customDiv.style.display = 'none';
+    }
+}
+
+// Delegated click handler for the cloned site form: options-section toggles and
+// the Standard/Custom mode switches.
+function handleModalClick(event) {
+    const target = event.target;
+    if (target.id === 'modal-switch-to-custom-btn') {
+        event.preventDefault();
+        toggleModalMode('custom');
+        return;
+    }
+    if (target.id === 'modal-switch-to-standard-btn') {
+        event.preventDefault();
+        toggleModalMode('standard');
+        return;
+    }
+    if (target.classList.contains('modal-toggle-btn')) {
+        event.preventDefault(); 
+        const sectionClass = target.dataset.section; 
+        if (sectionClass && siteModalContent) {
+            const section = siteModalContent.querySelector(`.${sectionClass}`); 
+            if (section) { 
+                section.style.display = section.style.display === 'none' ? 'block' : 'none'; 
+            }
+        }
+    }
+}
+
+// Delegated change handler for the cloned site form (Authentik toggle).
+function handleModalChange(event) {
+    if (event.target && event.target.id === 'modal-authentik-enable') {
+        handleModalAuthentikCheckboxChange(event);
     }
 }
 
 function openSiteModal(index = -1) {
-    if (!siteModal || !modalForm) return;
-    modalForm.reset(); 
-    modalSiteIndexInput.value = index; 
-    let siteData = {};
+    if (!siteModalTemplate) return;
+    // If a site modal is already open, close it first (fresh state each open).
+    if (siteModalCtrl) { siteModalCtrl.close(); }
 
-    if (index >= 0 && index < siteConfigs.length) { 
+    // Fresh clone each open → form state is reset and IDs stay unique in the DOM.
+    siteModalContent = siteModalTemplate.content.firstElementChild.cloneNode(true);
+    siteModalContent.addEventListener('click', handleModalClick);
+    siteModalContent.addEventListener('change', handleModalChange);
+    siteModalContent.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveSiteFromModal();
+    });
+
+    let siteData = {};
+    const isEdit = index >= 0 && index < siteConfigs.length;
+
+    if (isEdit) { 
         siteData = JSON.parse(JSON.stringify(siteConfigs[index])); 
-        modalTitle.textContent = `Edit Proxy Host: ${siteData.address || ''}`; 
     } else { 
-        modalTitle.textContent = 'Add Proxy Host'; 
         siteData.tls_skip_verify = currentPreferences.defaultSkipTlsVerify || false; 
         if (currentPreferences.defaultAuthentikEnabled) { 
             siteData.forward_auth = { 
@@ -567,19 +619,42 @@ function openSiteModal(index = -1) {
         siteData.is_custom = false; // New sites are standard by default
     }
 
+    const title = isEdit ? `Edit Proxy Host: ${siteData.address || ''}` : 'Add Proxy Host';
+
+    siteModalCtrl = HolafModal.open({
+        title: title,
+        content: siteModalContent,
+        theme: modalTheme(),
+        actions: [
+            { label: 'Save Changes', type: 'primary', form: 'modal-form' },
+            { label: 'Cancel', type: 'cancel' }
+        ],
+        onClose: () => {
+            siteModalContent = null;
+            siteModalCtrl = null;
+        }
+    });
+
+    document.getElementById('modal-site-index').value = index;
+
     if (siteData.is_custom) {
         populateModal(siteData); // Still populate standard fields for address
-        modalCustomContentTextarea.value = siteData.custom_content || '';
+        // Switch to custom mode FIRST: toggleModalMode('custom') pre-fills the
+        // textarea from the (now populated) standard fields. We then overwrite
+        // it with the stored custom content, otherwise editing a custom site
+        // would wipe it and make the save fail ("cannot be empty"). Generating
+        // on a user click of the Custom Config button is unchanged.
         toggleModalMode('custom');
+        document.getElementById('modal-custom-content').value = siteData.custom_content || '';
     } else {
         populateModal(siteData); 
         toggleModalMode('standard');
     }
-
-    siteModal.style.display = 'block';
 }
 
-function closeSiteModal() { if (siteModal) siteModal.style.display = 'none'; }
+function closeSiteModal() {
+    if (siteModalCtrl) siteModalCtrl.close();
+}
 
 function populateModal(data) {
     document.getElementById('modal-server-address').value = data.address || ''; 
@@ -591,7 +666,7 @@ function populateModal(data) {
     document.getElementById('modal-log-output').value = data.log || '';
     
     const authCheckbox = document.getElementById('modal-authentik-enable'); 
-    const authOptions = siteModal.querySelectorAll('.modal-authentik-options');
+    const authOptions = siteModalContent ? siteModalContent.querySelectorAll('.modal-authentik-options') : [];
 
     if (data.forward_auth) { 
         authCheckbox.checked = true; 
@@ -608,7 +683,9 @@ function populateModal(data) {
         document.getElementById('modal-authentik-trusted-proxies').value = currentPreferences.defaultAuthentikTrustedProxies || 'private_ranges';
         authOptions.forEach(el => el.style.display = 'none'); 
     }
-    siteModal.querySelectorAll('.options-section').forEach(section => { section.style.display = 'none'; });
+    if (siteModalContent) {
+        siteModalContent.querySelectorAll('.options-section').forEach(section => { section.style.display = 'none'; });
+    }
 }
 
 function collectStandardModalData() {
@@ -634,17 +711,18 @@ function collectStandardModalData() {
 }
 
 async function saveSiteFromModal() {
-    if (!modalForm) return;
-    const index = parseInt(modalSiteIndexInput.value, 10);
+    if (!siteModalContent) return;
+    const index = parseInt(document.getElementById('modal-site-index').value, 10);
     const address = document.getElementById('modal-server-address').value.trim();
     if (!address) { showToast("Site Address is required.", "warning"); return; }
 
     let siteData = { address: address };
 
-    const isCustomMode = modalCustomConfigDiv.style.display !== 'none';
+    const customDiv = document.getElementById('modal-custom-config');
+    const isCustomMode = !!customDiv && customDiv.style.display !== 'none';
 
     if (isCustomMode) {
-        const customContent = modalCustomContentTextarea.value.trim();
+        const customContent = document.getElementById('modal-custom-content').value.trim();
         if (!customContent) { showToast("Custom configuration content cannot be empty.", "warning"); return; }
         siteData.is_custom = true;
         siteData.custom_content = normalizeCustomIndentation(unwrapSiteBlockIfNeeded(customContent));
@@ -671,22 +749,9 @@ async function saveSiteFromModal() {
     await autoSaveAndReloadCaddy();
 }
 
-function handleModalToggleClick(event) {
-    if (event.target.classList.contains('modal-toggle-btn')) {
-        event.preventDefault(); 
-        const sectionClass = event.target.dataset.section; 
-        if (sectionClass) {
-            const section = siteModal.querySelector(`.${sectionClass}`); 
-            if (section) { 
-                section.style.display = section.style.display === 'none' ? 'block' : 'none'; 
-            }
-        }
-    }
-}
-
 function handleModalAuthentikCheckboxChange(event) {
     const isChecked = event.target.checked; 
-    const optionsDivs = siteModal.querySelectorAll('.modal-authentik-options'); 
+    const optionsDivs = siteModalContent ? siteModalContent.querySelectorAll('.modal-authentik-options') : []; 
     optionsDivs.forEach(div => { div.style.display = isChecked ? 'block' : 'none'; });
 
     if (isChecked) {
@@ -889,27 +954,23 @@ async function autoSaveAndReloadCaddy() {
         const caddyfileContent = outputTextarea.value;
         showToast("Auto-saving Caddyfile...", "info", 10000);
         try {
-            const saveResponse = await fetch('/api/caddyfile/save', {
+            const saveResp = await apiFetch('/api/caddyfile/save', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-                body: JSON.stringify({ content: caddyfileContent })
+                headers: { 'X-CSRFToken': getCsrfToken() },
+                body: { content: caddyfileContent }
             });
-            const saveData = await saveResponse.json();
-            if (!saveResponse.ok || saveData.status !== 'success') {
-                let errorMsg = saveData.message || `Failed to save Caddyfile (HTTP ${saveResponse.status})`;
-                if (saveData.details) errorMsg += ` Details: ${saveData.details}`;
-                throw new Error(errorMsg);
+            const saveData = saveResp.payload;
+            if (!saveResp.ok || !saveData || saveData.status !== 'success') {
+                throw new Error(apiErrorMessage(saveData, `Failed to save Caddyfile (HTTP ${saveResp.status})`));
             }
             showToast(`Caddyfile saved. Reloading Caddy...`, "info", 10000);
-            const reloadResponse = await fetch('/api/caddy/reload', {
+            const reloadResp = await apiFetch('/api/caddy/reload', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': getCsrfToken() }
             });
-            const reloadData = await reloadResponse.json();
-            if (!reloadResponse.ok || reloadData.status !== 'success') {
-                let errorMsg = reloadData.message || `Failed to reload Caddy (HTTP ${reloadResponse.status})`;
-                if (reloadData.details) errorMsg += ` Details: ${reloadData.details}`;
-                throw new Error(errorMsg);
+            const reloadData = reloadResp.payload;
+            if (!reloadResp.ok || !reloadData || reloadData.status !== 'success') {
+                throw new Error(apiErrorMessage(reloadData, `Failed to reload Caddy (HTTP ${reloadResp.status})`));
             }
             showToast(`Caddyfile auto-saved and Caddy reloaded!`, "success", 7000);
         } catch (error) {
@@ -930,12 +991,12 @@ async function applyGlobalServersOptions() {
     const originalLabel = applyServersOptionsBtn.textContent;
     applyServersOptionsBtn.textContent = 'Applying...';
     try {
-        const response = await fetch('/api/caddyfile/configure_servers_options', {
+        const resp = await apiFetch('/api/caddyfile/configure_servers_options', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-            body: JSON.stringify({ idleTimeout: idleTimeout, keepAliveInterval: keepAliveInterval })
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            body: { idleTimeout: idleTimeout, keepAliveInterval: keepAliveInterval }
         });
-        const result = await response.json();
+        const result = resp.payload || {};
         const parserStatus = result.parser_status || result.status || 'unknown';
         if (serversOptionsStatusText) serversOptionsStatusText.textContent = `Status: ${parserStatus}`;
         const toastType = result.status === 'error' ? 'error' : (result.status === 'conflict' ? 'warning' : 'success');
@@ -971,17 +1032,17 @@ async function hardenSite(index) {
     }
     showToast(`Hardening reverse_proxy ${upstream}...`, 'info', 10000);
     try {
-        const response = await fetch('/api/caddyfile/harden_site', {
+        const resp = await apiFetch('/api/caddyfile/harden_site', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-            body: JSON.stringify({
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            body: {
                 upstream: upstream,
                 flush: !!(currentPreferences.siteFlushIntervalEnabled),
                 keepAliveIdle: (currentPreferences.siteTransportKeepAliveIdle || '').trim(),
                 keepAliveInterval: (currentPreferences.siteTransportKeepAliveInterval || '').trim()
-            })
+            }
         });
-        const result = await response.json();
+        const result = resp.payload || {};
         const parserStatus = result.parser_status || result.status || 'unknown';
         const toastType = result.status === 'error' ? 'error' : (result.status === 'conflict' ? 'warning' : 'success');
         showToast(result.message || `Harden result: ${parserStatus}`, toastType, 8000);
@@ -1025,14 +1086,14 @@ async function savePreferences() {
     if (currentPreferences.caddyfilePath) prefsToSave.caddyfilePath = currentPreferences.caddyfilePath;
     
     try {
-        const response = await fetch('/api/preferences', { 
+        const resp = await apiFetch('/api/preferences', { 
             method: 'POST', 
-            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() }, 
-            body: JSON.stringify(prefsToSave) 
+            headers: { 'X-CSRFToken': getCsrfToken() }, 
+            body: prefsToSave 
         });
-        const result = await response.json();
-        if (!response.ok && result.status !== 'warning') { 
-            throw new Error(result.message || `HTTP error! status: ${response.status}`); 
+        const result = resp.payload || {};
+        if (!resp.ok && result.status !== 'warning') { 
+            throw new Error(apiErrorMessage(result, `HTTP error! status: ${resp.status}`)); 
         }
         
         currentPreferences = result.saved_prefs || { ...currentPreferences, ...prefsToSave }; 
@@ -1052,9 +1113,9 @@ async function savePreferences() {
 
 async function loadPreferences() {
     try {
-        const response = await fetch('/api/preferences');
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        currentPreferences = await response.json();
+        const resp = await apiFetch('/api/preferences', { method: 'GET' });
+        if (!resp.ok) throw new Error(apiErrorMessage(resp.payload, `HTTP error! status: ${resp.status}`));
+        currentPreferences = resp.payload;
 
         // Priority: localStorage > loaded preferences > select value > CSS default
         const storedTheme = localStorage.getItem('caddyPanelTheme');
@@ -1086,10 +1147,10 @@ async function loadPreferences() {
 
         // Check GeoIP status
         try {
-            const geoipRes = await fetch('/api/geoip/status');
-            if (geoipRes.ok) {
-                const geoipData = await geoipRes.json();
-                if (geoipStatusText) geoipStatusText.textContent = geoipData.geoip_available ? '✓ GeoIP active' : '✗ Not configured';
+            const geoipResp = await apiFetch('/api/geoip/status', { method: 'GET' });
+            if (geoipResp.ok) {
+                const geoipData = geoipResp.payload;
+                setGeoipStatus(geoipData.geoip_available ? 'check' : 'x', geoipData.geoip_available ? 'GeoIP active' : 'Not configured');
             }
         } catch (e) {
             if (geoipStatusText) geoipStatusText.textContent = '';
@@ -1367,23 +1428,93 @@ async function handleImportCaddyfile(event) {
 // --- Change Password Functionality ---
 
 const changePasswordLink = document.getElementById('change-password-link');
-const changePasswordModal = document.getElementById('change-password-modal');
-const changePasswordForm = document.getElementById('change-password-form');
-const closeChangePwdModalBtn = document.getElementById('close-change-pwd-modal');
-const cpCancelBtn = document.getElementById('cp-cancel-btn');
-const cpSaveBtn = document.getElementById('cp-save-btn');
 
 function openChangePasswordModal() {
-    if (changePasswordModal) {
-        changePasswordForm.reset();
-        changePasswordModal.style.display = 'block';
-    }
+    if (!changePasswordTemplate) return;
+    if (changePwdCtrl) { changePwdCtrl.close(); }
+    // Fresh clone each open (the shell/footer is rendered by HolafModal).
+    changePwdContent = changePasswordTemplate.content.firstElementChild.cloneNode(true);
+    changePwdContent.addEventListener('submit', handleChangePasswordSubmit);
+
+    changePwdCtrl = HolafModal.open({
+        title: 'Change Password',
+        content: changePwdContent,
+        theme: modalTheme(),
+        actions: [
+            { label: 'Change Password', type: 'primary', form: 'change-password-form' },
+            { label: 'Cancel', type: 'cancel' }
+        ],
+        onClose: () => {
+            changePwdContent = null;
+            changePwdCtrl = null;
+        }
+    });
 }
 
 function closeChangePasswordModal() {
-    if (changePasswordModal) {
-        changePasswordModal.style.display = 'none';
-        changePasswordForm.reset();
+    if (changePwdCtrl) changePwdCtrl.close();
+}
+
+// Footer submit button produced by HolafModal (type="submit" + form attribute).
+function changePwdSubmitBtn() {
+    return changePwdCtrl && changePwdCtrl.footer
+        ? changePwdCtrl.footer.querySelector('button[form="change-password-form"]')
+        : null;
+}
+
+async function handleChangePasswordSubmit(e) {
+    e.preventDefault();
+
+    const currentPassword = document.getElementById('cp-current-password').value;
+    const newPassword = document.getElementById('cp-new-password').value;
+    const confirmPassword = document.getElementById('cp-confirm-password').value;
+
+    // Client-side validation
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        showToast('All fields are required.', 'warning');
+        return;
+    }
+
+    if (newPassword.length < 8) {
+        showToast('New password must be at least 8 characters long.', 'warning');
+        return;
+    }
+
+    if (newPassword !== confirmPassword) {
+        showToast('New passwords do not match.', 'warning');
+        return;
+    }
+
+    const saveBtn = changePwdSubmitBtn();
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Changing...'; }
+
+    try {
+        const resp = await apiFetch('/api/change-password', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            body: {
+                current_password: currentPassword,
+                new_password: newPassword,
+                confirm_password: confirmPassword
+            }
+        });
+
+        const result = resp.payload || {};
+
+        if (resp.ok && result.status === 'success') {
+            showToast(result.message, 'success');
+            closeChangePasswordModal();
+            // Server-side session.clear() invalidates the current CSRF token.
+            // Reload the page so the browser picks up the fresh token rendered by the server.
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            showToast(apiErrorMessage(result, 'Failed to change password.'), 'error', 8000);
+        }
+    } catch (err) {
+        console.error('Error changing password:', err);
+        showToast('Network error: could not change password.', 'error', 8000);
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Change Password'; }
     }
 }
 
@@ -1391,80 +1522,5 @@ if (changePasswordLink) {
     changePasswordLink.addEventListener('click', (e) => {
         e.preventDefault();
         openChangePasswordModal();
-    });
-}
-
-if (closeChangePwdModalBtn) {
-    closeChangePwdModalBtn.addEventListener('click', closeChangePasswordModal);
-}
-
-if (cpCancelBtn) {
-    cpCancelBtn.addEventListener('click', closeChangePasswordModal);
-}
-
-if (changePasswordModal) {
-    changePasswordModal.addEventListener('click', (event) => {
-        if (event.target === changePasswordModal) {
-            closeChangePasswordModal();
-        }
-    });
-}
-
-if (changePasswordForm) {
-    changePasswordForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const currentPassword = document.getElementById('cp-current-password').value;
-        const newPassword = document.getElementById('cp-new-password').value;
-        const confirmPassword = document.getElementById('cp-confirm-password').value;
-
-        // Client-side validation
-        if (!currentPassword || !newPassword || !confirmPassword) {
-            showToast('All fields are required.', 'warning');
-            return;
-        }
-
-        if (newPassword.length < 8) {
-            showToast('New password must be at least 8 characters long.', 'warning');
-            return;
-        }
-
-        if (newPassword !== confirmPassword) {
-            showToast('New passwords do not match.', 'warning');
-            return;
-        }
-
-        cpSaveBtn.disabled = true;
-        cpSaveBtn.textContent = 'Changing...';
-
-        try {
-            const response = await fetch('/api/change-password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-                body: JSON.stringify({
-                    current_password: currentPassword,
-                    new_password: newPassword,
-                    confirm_password: confirmPassword
-                })
-            });
-
-            const result = await response.json();
-
-            if (response.ok && result.status === 'success') {
-                showToast(result.message, 'success');
-                closeChangePasswordModal();
-                // Server-side session.clear() invalidates the current CSRF token.
-                // Reload the page so the browser picks up the fresh token rendered by the server.
-                setTimeout(() => window.location.reload(), 1500);
-            } else {
-                showToast(result.message || 'Failed to change password.', 'error', 8000);
-            }
-        } catch (err) {
-            console.error('Error changing password:', err);
-            showToast('Network error: could not change password.', 'error', 8000);
-        } finally {
-            cpSaveBtn.disabled = false;
-            cpSaveBtn.textContent = 'Change Password';
-        }
     });
 }

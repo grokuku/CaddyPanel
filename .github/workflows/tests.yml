@@ -1,6 +1,7 @@
 # Runs the pytest suite for caddyfile_parser (Python 3.10, matching the
-# Dockerfile base image). Kept separate from docker-publish.yml so tests run on
-# every push/PR without waiting for (or triggering) an image build.
+# Dockerfile base image) plus the front-end (jsdom) suite. Kept separate from
+# docker-publish.yml so tests run on every push/PR without waiting for (or
+# triggering) an image build.
 name: Tests
 
 on:
@@ -29,3 +30,22 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest -v
+
+  # Front-end guard: runs the REAL static/script.js + static/stats.js in jsdom
+  # (no docker, no build). Separate job so it never blocks or breaks pytest.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install jsdom (dev only — not a committed dependency)
+        run: npm install --no-save jsdom@^30
+
+      - name: Run front-end tests
+        run: node tests/test_frontend.js

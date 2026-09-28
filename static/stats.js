@@ -18,13 +18,42 @@ function getCsrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
 }
 
+// --- API helper (HolafFetch + CaddyPanel contract) ---
+// HolafFetch throws on ANY non-2xx status and builds its message from
+// body.error/body.detail; the CaddyPanel API returns {status, message,
+// details}. This adapter restores the (ok, payload) shape used here so server
+// messages/details keep reaching the toasts. Transport-level failures are
+// re-thrown for the existing catch blocks.
+async function apiFetch(url, opts = {}) {
+    try {
+        const payload = await HolafFetch.request(url, opts);
+        return { ok: true, status: 200, payload };
+    } catch (err) {
+        if (err && err.name === 'HolafFetchError' && err.status && err.data) {
+            return { ok: false, status: err.status, payload: err.data };
+        }
+        throw err;
+    }
+}
+
+function apiErrorMessage(payload, fallback) {
+    let msg = (payload && payload.message) || fallback;
+    if (payload && payload.details) msg += ` Details: ${payload.details}`;
+    return msg;
+}
+
 let currentPeriod = '7d';
 let currentHost = null;
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.has('period')) currentPeriod = urlParams.get('period');
 if (urlParams.has('host'))   currentHost  = urlParams.get('host') || null;
 
-// Country code → flag emoji
+// Country code → flag.
+// The flag is INTENTIONALLY an emoji (regional-indicator pair) — NOT a
+// migration oversight: it renders on the target Linux host and scales with
+// the surrounding font. The HolafIcons "globe" SVG is only the fallback for an
+// unknown/invalid code; its size/alignment is handled by the `.country-flag svg`
+// rule in templates/stats.html so it matches the emoji.
 function countryFlag(code) {
     if (!code || code === 'Unknown' || code.length !== 2) return HolafIcons.get('globe');
     const c1 = code.charCodeAt(0) - 65, c2 = code.charCodeAt(1) - 65;
@@ -57,18 +86,8 @@ const COUNTRY_NAMES = {
 function countryName(code) { return COUNTRY_NAMES[code] || code; }
 
 function showToast(message, type = 'info', duration = 5000) {
-    const c = document.getElementById('toast-container');
-    if (!c) { alert(message); return; }
-    const t = document.createElement('div');
-    t.className = `toast ${type === 'error' ? 'danger' : type}`;
-    const m = document.createElement('span');
-    m.className = 'toast-message'; m.textContent = message; t.appendChild(m);
-    const b = document.createElement('button');
-    b.className = 'toast-close-btn'; b.innerHTML = '\u00d7';
-    b.onclick = () => { t.classList.remove('show'); setTimeout(() => { if (t.parentNode === c) c.removeChild(t); }, 500); };
-    t.appendChild(b); c.appendChild(t);
-    setTimeout(() => t.classList.add('show'), 10);
-    setTimeout(() => { if (t.classList.contains('show')) b.click(); }, duration);
+    // "danger" (CaddyPanel legacy) → "error" (HolafToast type).
+    HolafToast.show({ message, type: type === 'danger' ? 'error' : type, duration });
 }
 
 function applyStoredTheme() {
@@ -79,9 +98,9 @@ function applyStoredTheme() {
 
 async function loadHosts() {
     try {
-        const res = await fetch(statsConfig.get_stats_hosts_url);
-        if (!res.ok) return;
-        const hosts = await res.json();
+        const resp = await apiFetch(statsConfig.get_stats_hosts_url, { method: 'GET' });
+        if (!resp.ok) return;
+        const hosts = resp.payload;
         const sel = document.getElementById('host-select');
         hosts.forEach(h => {
             if (!sel.querySelector(`option[value="${CSS.escape(h)}"]`)) {
@@ -346,9 +365,9 @@ async function fetchAndDisplayStats() {
     apiUrl += '?' + params.toString();
 
     try {
-        const res = await fetch(apiUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const stats = await res.json();
+        const resp = await apiFetch(apiUrl, { method: 'GET' });
+        if (!resp.ok) throw new Error(apiErrorMessage(resp.payload, `HTTP ${resp.status}`));
+        const stats = resp.payload;
 
         if (stats.log_read_error) {
             logMsg.innerHTML = `<strong>Warning:</strong> ${escapeHtml(stats.log_read_error)}`;
@@ -405,14 +424,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             showToast('Configuring Caddyfile for logging...', 'info', 10000);
             cfgBtn.disabled = true; cfgBtn.textContent = 'Configuring...';
             try {
-                const res = await fetch(statsConfig.configure_caddyfile_logging_url, { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
-                const result = await res.json();
-                if (result.status === 'success') {
+                const resp = await apiFetch(statsConfig.configure_caddyfile_logging_url, { method: 'POST', headers: { 'X-CSRFToken': getCsrfToken() } });
+                const result = resp.payload || {};
+                if (resp.ok && result.status === 'success') {
                     showToast(result.message, 'success', 7000);
                     document.getElementById('log-config-action-area').style.display = 'none';
                     setTimeout(fetchAndDisplayStats, 2000);
                 } else {
-                    showToast(result.message + (result.details ? ` Details: ${result.details}` : ''),
+                    showToast(apiErrorMessage(result, `Error: ${resp.status}`),
                               result.status === 'warning' ? 'warning' : 'danger', 10000);
                 }
             } catch (err) { showToast(`Error: ${err.message}`, 'danger', 10000); }
