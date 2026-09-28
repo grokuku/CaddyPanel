@@ -1,0 +1,180 @@
+# CI — the single automatic workflow. Replaces the former tests.yml +
+# test-build.yml.
+#
+# Principle enforced here: a push on main runs the tests AND builds/publishes
+# the TEST images (amd64 + arm64) to BOTH registries. A pull request runs the
+# same tests + a local Docker smoke test, but never touches the registries
+# (no credentials are exposed to forks).
+#
+# Jobs:
+#   quality      — Python 3.10 (pytest) + front-end (jsdom on Node 24).
+#   docker       — builds one linux/amd64 image LOCALLY and runs
+#                  scripts/smoke.sh on it (also on PRs: catches a broken
+#                  Dockerfile before merge).
+#   publish-test — buildx multi-arch build/push of :test and :sha-<short> to
+#                  GHCR and Docker Hub. Skipped on pull_request.
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+# One run per ref: a new push cancels the previous in-progress run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal permissions: read the repo (checkout) + write packages (push to GHCR).
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Docker Hub image name MUST match docker-compose.yml / README.md.
+  DOCKERHUB_IMAGE: holaflenain/caddypanel
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # Byte-compile every Python file (syntax guard). .venv is pruned so a
+      # stray local virtualenv can never shadow the CI interpreter.
+      - name: Byte-compile Python sources (syntax check)
+        run: |
+          find . -path ./.venv -prune -o -name '*.py' -print0 \
+            | xargs -0 python -m py_compile
+
+      - name: Run pytest
+        run: python -m pytest -v
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 24, NOT 20. jsdom@30 requires node ^22.22.2 || ^24.15.0 || >=26.
+          # npm does not enforce the `engines` field, so on Node 20 the install
+          # still succeeded and only require('jsdom') threw at runtime — which
+          # used to be swallowed and reported as "jsdom introuvable". Keep this
+          # at 24 or newer.
+          node-version: "24"
+
+      - name: Install jsdom (dev only — not a committed dependency)
+        run: npm install --no-save jsdom@^30
+
+      - name: Run front-end tests
+        run: node tests/test_frontend.js
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # A multi-arch manifest cannot be RUN, so the smoke test uses a
+      # single-platform linux/amd64 image loaded into the local Docker daemon
+      # (`load: true`). This is exactly what runs on the runner's native
+      # architecture, so no QEMU is needed here.
+      - name: Build single-arch image for the smoke test (load locally)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ env.DOCKERHUB_IMAGE }}:smoke
+
+      - name: Smoke-test the image
+        run: bash scripts/smoke.sh "${DOCKERHUB_IMAGE}:smoke"
+
+  publish-test:
+    runs-on: ubuntu-latest
+    needs: docker
+    # Never run on pull_request (fork PRs must not get registry credentials).
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < version.txt)" >> "$GITHUB_OUTPUT"
+
+      # GHCR image names MUST be lowercase, but github.repository preserves the
+      # repository's original casing (e.g. grokuku/CaddyPanel) -> lowercase it
+      # here, otherwise `docker tag`/push fails on the uppercase characters.
+      - name: Compute lowercase image refs and short SHA
+        id: meta
+        run: |
+          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub login uses the DOCKER_USERNAME / DOCKER_PASSWORD secrets
+      # configured for the holaflenain account (same secrets as before).
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Multi-arch build & push of the TEST images to both registries. The
+      # OCI labels are fed by VERSION/GIT_COMMIT build-args, and the buildx
+      # GitHub Actions cache is shared with the `docker` job above.
+      - name: Build and push multi-arch test images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ steps.meta.outputs.ghcr }}:test
+            ${{ steps.meta.outputs.ghcr }}:sha-${{ steps.meta.outputs.sha_short }}
+            ${{ env.DOCKERHUB_IMAGE }}:test
+            ${{ env.DOCKERHUB_IMAGE }}:sha-${{ steps.meta.outputs.sha_short }}

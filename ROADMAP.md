@@ -62,7 +62,8 @@ CaddyPanel/
 ├── ROADMAP.md             # Ce fichier
 ├── .github/
 │   └── workflows/
-│       └── docker-publish.yml   # CI/CD GitHub Actions
+│       ├── ci.yml               # Auto (push/PR) : tests + smoke + images :test (GHCR + Docker Hub)
+│       └── release.yml          # Manuel : tests (gate) + images :latest / :<version>
 ├── caddyfile/
 │   └── Caddyfile          # Caddyfile d'exemple pour initialisation
 ├── docker/

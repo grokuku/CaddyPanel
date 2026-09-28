@@ -32,7 +32,8 @@ CaddyPanel/
 ├── .git/...                # Git directory
 ├── .github/                # GitHub configurations (CI/CD workflows)
 │   └── workflows/
-│       └── docker-publish.yml
+│       ├── ci.yml          # Auto (push/PR): tests + Docker smoke + :test images
+│       └── release.yml     # Manual: tests gate + :latest / :<version> images
 ├── caddyfile/
 │   └── Caddyfile           # Default Caddy configuration file
 ├── docker/

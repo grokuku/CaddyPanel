@@ -64,17 +64,31 @@ function loadJsdom() {
     if (holafLib) siblings.unshift(holafLib);
     for (const dir of siblings) candidates.push(path.join(dir, "node_modules", "jsdom"));
 
+    // Keep the resolution logic unchanged, but STOP swallowing the real
+    // failure: a jsdom that is present but unloadable (e.g. incompatible with
+    // the running Node version) used to surface as a misleading "jsdom
+    // introuvable". We now collect each attempt's error (type + message) and
+    // print it, so the true cause is visible instead of costing hours.
+    const errors = [];
     for (const c of candidates) {
         try {
             return require(c);
-        } catch (_) {
-            /* try the next candidate */
+        } catch (err) {
+            const type = (err && err.name) ? err.name : "Error";
+            const msg = (err && err.message) ? err.message : String(err);
+            errors.push(`   - ${c}\n       ${type}: ${msg}`);
         }
     }
     console.error(
-        "⛔ jsdom introuvable. Installez-le puis relancez :\n" +
+        "⛔ jsdom introuvable ou inchargeable. Tentatives :\n" +
+            errors.join("\n") +
+            "\n\n" +
+            "   Si vous lisez « SyntaxError » ou une erreur de version, c'est que\n" +
+            "   jsdom EST installe mais INCOMPATIBLE : jsdom@30 exige\n" +
+            "   node ^22.22.2 || ^24.15.0 || >=26 (voir `node --version`).\n" +
+            "   Installer puis relancer :\n" +
             "     npm install --no-save jsdom\n" +
-            "   ou pointez vers une install existante :\n" +
+            "   ou pointer vers une install existante :\n" +
             "     CADDYPANEL_JSDOM_PATH=/chemin/node_modules/jsdom node tests/test_frontend.js"
     );
     process.exit(3);
