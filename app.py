@@ -41,7 +41,19 @@ STATS_DB_PATH = APP_DATA_DIR / 'stats.db'
 PREFERENCES_FILE = APP_DATA_DIR / 'preferences.json'
 USERS_FILE = APP_DATA_DIR / 'users.json'
 FILE_BROWSE_DIR = Path(os.environ.get('FILE_BROWSE_DIR', str(CADDY_CONFIG_FILE.parent))).resolve()
-SENSITIVE_FILES = {'users.json', 'preferences.json', 'stats.db', 'GeoIP.conf', '.env', 'app.py', 'stats_aggregator.py'}
+SENSITIVE_FILES = {'users.json', 'preferences.json', 'stats.db', 'stats.db-wal', 'stats.db-shm', 'stats.db-journal', 'GeoIP.conf', '.env', 'app.py', 'stats_aggregator.py'}
+# Name suffixes always refused by /api/readfile: editor/entrypoint backups
+# ('.bak', '.old') and atomic_write leftovers ('.tmp') can contain secrets.
+SENSITIVE_SUFFIXES = ('.bak', '.old', '.tmp')
+# Allowlist for /api/readfile (audit M7): the endpoint is only meant for TEXT
+# content — the Caddyfile, logs and site configs. Any other format (databases,
+# binaries, unknown extensions) is refused, regardless of location.
+ALLOWED_READ_EXTENSIONS = {'.txt', '.log', '.json', '.conf', '.md', '.yml', '.yaml', '.ini', '.cfg', '.caddyfile'}
+# MaxMind DB v2 header magic: AB CD EF '>' (0x3E).
+MMDB_MAGIC = b'\xab\xcd\xef\x3e'
+# GeoLite2-Country.mmdb is ~10-15 MB: 20 MB keeps a sane margin for legit
+# uploads while preventing an oversized POST from filling the volume (audit M6).
+MAX_MMDB_UPLOAD_BYTES = 20 * 1024 * 1024
 
 def _is_within_directory(path, base):
     """Check if `path` is within `base` directory. Safe against prefix attacks."""
@@ -230,6 +242,16 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_COOKIE_SECURE', '1') == '1'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
+# Cap request body size globally (the only large uploads are the .mmdb files,
+# ~10-15 MB legit). Werkzeug enforces this during body parsing and raises 413.
+app.config['MAX_CONTENT_LENGTH'] = MAX_MMDB_UPLOAD_BYTES
+
+
+@app.errorhandler(413)
+def request_entity_too_large(e):
+    """Return a clean JSON error when the request body exceeds MAX_CONTENT_LENGTH."""
+    return jsonify({"status": "error", "message": f"Request too large: uploads are limited to {MAX_MMDB_UPLOAD_BYTES // (1024 * 1024)} MB."}), 413
+
 
 # Initialize stats database (works both with dev server and gunicorn)
 stats_aggregator.init_stats_db(STATS_DB_PATH)
@@ -872,6 +894,23 @@ def api_geoip_upload():
         return jsonify({"status": "error", "message": "File must be a .mmdb file."}), 400
 
     geoip_path = Path(os.environ.get('GEOIP_DB_PATH', str(APP_DATA_DIR / 'GeoLite2-Country.mmdb')))
+    # Audit M6: validate magic number and size BEFORE writing anything to disk.
+    # The request body itself is already capped by MAX_CONTENT_LENGTH (413),
+    # this is defense in depth against chunked/streamed bodies that bypass it.
+    try:
+        f.stream.seek(0, os.SEEK_END)
+        upload_size = f.stream.tell()
+        f.stream.seek(0)
+    except (OSError, ValueError):
+        return jsonify({"status": "error", "message": "Unreadable upload stream."}), 400
+    if upload_size == 0:
+        return jsonify({"status": "error", "message": "Uploaded file is empty."}), 400
+    if upload_size > MAX_MMDB_UPLOAD_BYTES:
+        return jsonify({"status": "error", "message": f"File too large: .mmdb uploads are limited to {MAX_MMDB_UPLOAD_BYTES // (1024 * 1024)} MB."}), 413
+    header = f.stream.read(len(MMDB_MAGIC))
+    f.stream.seek(0)
+    if header != MMDB_MAGIC:
+        return jsonify({"status": "error", "message": "Not a valid MaxMind .mmdb database (invalid magic number)."}), 400
     try:
         geoip_path.parent.mkdir(parents=True, exist_ok=True)
         f.save(str(geoip_path))
@@ -921,12 +960,16 @@ def read_file():
     # ... (existing code for read_file - unchanged)
     req_path_str = request.args.get('path')
     if not req_path_str: return jsonify({"status": "error", "message": "No path"}), 400
-    # Block access to sensitive files. Also refuse atomic_write leftovers
-    # ('.users.json.ab12.tmp', ...): their exact basename is not in
-    # SENSITIVE_FILES but they can contain partial copies of secrets, so any
-    # '.tmp' name is refused too.
     requested_name = Path(req_path_str).name
-    if requested_name in SENSITIVE_FILES or requested_name.endswith('.tmp'): abort(403)
+    name_lower = requested_name.lower()
+    # 1) Blocklist (audit M7): exact names (case-insensitive: the volume may
+    #    live on a case-insensitive filesystem), incl. SQLite sidecars, and any
+    #    backup/temp leftovers ('*.bak' created by the entrypoint, '*.old',
+    #    '*.tmp' from atomic_write).
+    if name_lower in SENSITIVE_FILES or name_lower.endswith(SENSITIVE_SUFFIXES): abort(403)
+    # 2) Allowlist: only known text formats (plus the extension-less
+    #    'Caddyfile'). This also refuses every binary file.
+    if requested_name != 'Caddyfile' and Path(requested_name).suffix.lower() not in ALLOWED_READ_EXTENSIONS: abort(403)
     try:
         requested_file_path = FILE_BROWSE_DIR.joinpath(req_path_str).resolve()
         if not _is_within_directory(requested_file_path, FILE_BROWSE_DIR): abort(403)
@@ -939,6 +982,8 @@ def read_file():
         raise
     except FileNotFoundError: return jsonify({"status": "error", "message": "Not found"}), 404
     except PermissionError: return jsonify({"status": "error", "message": "Permission denied"}), 403
+    except UnicodeDecodeError:
+        return jsonify({"status": "error", "message": "File is binary or not valid UTF-8 text."}), 415
     except Exception as e: return jsonify({"status": "error", "message": f"Error: {e}"}), 500
 
 @app.route('/api/caddyfile/save', methods=['POST'])

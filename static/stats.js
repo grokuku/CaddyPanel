@@ -26,9 +26,9 @@ if (urlParams.has('host'))   currentHost  = urlParams.get('host') || null;
 
 // Country code → flag emoji
 function countryFlag(code) {
-    if (!code || code === 'Unknown' || code.length !== 2) return '🌍';
+    if (!code || code === 'Unknown' || code.length !== 2) return HolafIcons.get('globe');
     const c1 = code.charCodeAt(0) - 65, c2 = code.charCodeAt(1) - 65;
-    if (c1 < 0 || c1 > 25 || c2 < 0 || c2 > 25) return '🌍';
+    if (c1 < 0 || c1 > 25 || c2 < 0 || c2 > 25) return HolafIcons.get('globe');
     return String.fromCodePoint(0x1F1E6 + c1, 0x1F1E6 + c2);
 }
 

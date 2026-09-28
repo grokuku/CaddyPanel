@@ -188,7 +188,7 @@ button:hover, .action-btn:hover { background-color: var(--accent-hover); }
 #sites-table .action-btn { padding: 3px 6px; font-size: 0.85em; margin: 1px; }
 #sites-table td input[type="checkbox"] { vertical-align: middle; margin: 0; }
 #sites-table td a { color: var(--text-secondary); text-decoration: none; }
-#sites-table td a:hover { text-decoration: underline; color: var(--accent); }
+#sites-table td a:hover { text-decoration: underline; color: var(--accent); }\n#sites-table .action-btn svg { width: 16px; height: 16px; vertical-align: middle; }
 #sites-table th:nth-child(4), #sites-table th:nth-child(5) { text-align: center; }
 
 /* ===== Raw Caddyfile ===== */

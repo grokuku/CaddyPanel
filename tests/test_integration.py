@@ -24,6 +24,7 @@ These tests import the real app with a throwaway APP_DATA_DIR / CADDY_CONFIG
 so they never touch the repository's real stats.db or Caddyfile.
 """
 
+import io
 import json
 import os
 import sqlite3
@@ -1118,3 +1119,128 @@ def test_cleanup_stale_tmp_files_removes_leftovers_only():
     finally:
         stale.unlink(missing_ok=True)
         keeper.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Audit M6: .mmdb upload limits (MAX_CONTENT_LENGTH, magic number, size)
+# ---------------------------------------------------------------------------
+
+MMDB_MAGIC = app_module.MMDB_MAGIC
+
+
+def _geoip_upload(client, data, filename='GeoLite2-Country.mmdb', csrf='geo-csrf'):
+    with client.session_transaction() as sess:
+        sess['username'] = ADMIN_USER
+        sess['_csrf_token'] = csrf
+    return client.post('/api/geoip/upload',
+                       data={'file': (io.BytesIO(data), filename)},
+                       headers={'X-CSRFToken': csrf})
+
+
+def test_geoip_upload_oversized_request_rejected_with_json(client, monkeypatch):
+    """A body exceeding MAX_CONTENT_LENGTH yields a clean JSON 413, not a 500/HTML page."""
+    monkeypatch.setitem(app.config, 'MAX_CONTENT_LENGTH', 1024)
+    data = MMDB_MAGIC + b'A' * 4096  # small but over the patched limit
+    r = _geoip_upload(client, data)
+    assert r.status_code == 413, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body['status'] == 'error'
+    assert 'large' in body['message'].lower()
+    # Nothing must have been written to disk
+    assert not Path(os.environ['GEOIP_DB_PATH']).exists()
+
+
+def test_geoip_upload_oversized_mmdb_rejected_route_guard(client, monkeypatch):
+    """Defense in depth: the route itself refuses a magic-valid file over
+    MAX_MMDB_UPLOAD_BYTES with a JSON 413 and never saves it."""
+    monkeypatch.setattr(app_module, 'MAX_MMDB_UPLOAD_BYTES', 1024)
+    data = MMDB_MAGIC + b'A' * 4096
+    r = _geoip_upload(client, data)
+    assert r.status_code == 413, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body['status'] == 'error'
+    assert '20 MB' in body['message'] or 'MB' in body['message']
+    assert not Path(os.environ['GEOIP_DB_PATH']).exists()
+
+
+def test_geoip_upload_invalid_magic_number_rejected(client):
+    """A file named *.mmdb whose content is not a MaxMind DB is refused
+    with a clear 400 before any bytes hit the disk."""
+    for payload in (b'GIF89a not an mmdb at all', b'short'):
+        r = _geoip_upload(client, payload)
+        assert r.status_code == 400, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body['status'] == 'error'
+        assert 'magic' in body['message'].lower()
+    assert not Path(os.environ['GEOIP_DB_PATH']).exists()
+
+
+def test_geoip_upload_empty_file_rejected(client):
+    r = _geoip_upload(client, b'')
+    assert r.status_code == 400
+    assert 'empty' in r.get_json()['message'].lower()
+    assert not Path(os.environ['GEOIP_DB_PATH']).exists()
+
+
+# ---------------------------------------------------------------------------
+# Audit M7: /api/readfile blocklist completion + text-format allowlist
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('name', [
+    'stats.db-wal',
+    'stats.db-shm',
+    'stats.db-journal',
+    'Caddyfile.bak',
+    'app.py.bak',
+    'preferences.json.old',
+    'GeoLite2-Country.mmdb',
+    'binary-no-extension',
+    'archive.dat',
+    'USERS.JSON',
+])
+def test_readfile_blocks_sensitive_and_binary_files(client, name):
+    """SQLite sidecars, entrypoint backups and non-text files are all 403."""
+    _create_admin()
+    target = app_module.FILE_BROWSE_DIR / name
+    target.write_bytes(b'secret or binary content')
+    try:
+        with client.session_transaction() as sess:
+            sess['username'] = ADMIN_USER
+        r = client.get(f'/api/readfile?path={name}')
+        assert r.status_code == 403, \
+            f'{name}: expected 403, got {r.status_code}'
+    finally:
+        target.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('name,content', [
+    ('Caddyfile', 'example.com {\n    root * /var/www\n}\n'),
+    ('notes.txt', 'hello'),
+    ('site.conf', 'example.org {\n}\n'),
+    ('docs.md', '# title'),
+    ('access.log', 'line one'),
+])
+def test_readfile_allowlist_still_allows_text_files(client, name, content):
+    """Legit text files (Caddyfile, logs, site configs) remain readable."""
+    _create_admin()
+    target = app_module.FILE_BROWSE_DIR / name
+    target.write_text(content, encoding='utf-8')
+    try:
+        with client.session_transaction() as sess:
+            sess['username'] = ADMIN_USER
+        r = client.get(f'/api/readfile?path={name}')
+        assert r.status_code == 200, \
+            f'{name}: expected 200, got {r.status_code}: {r.get_data(as_text=True)}'
+        assert r.get_json()['content'] == content
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_geoip_upload_magic_valid_but_invalid_db_returns_500(client):
+    """A magic-valid but corrupt .mmdb is saved, fails geoip2 loading, is
+    unlinked and reported as a 500 error (existing behavior preserved)."""
+    r = _geoip_upload(client, MMDB_MAGIC + b'corrupt-metadata-not-a-db')
+    assert r.status_code == 500
+    assert r.get_json()['status'] == 'error'
+    assert not Path(os.environ['GEOIP_DB_PATH']).exists()

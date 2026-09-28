@@ -440,10 +440,10 @@ function renderSitesTable() {
 
         cellActions.classList.add('actions');
         cellActions.innerHTML = `
-            <button type="button" class="action-btn stats-btn" title="View Stats (placeholder)">📊</button>
-            <button type="button" class="action-btn harden-btn" title="Harden: inject flush_interval -1 + keep-alive transport into the existing Caddyfile">🛡️</button>
-            <button type="button" class="action-btn edit-btn" title="Edit">✏️</button>
-            <button type="button" class="action-btn delete-btn" title="Delete">❌</button>
+            <button type="button" class="action-btn stats-btn" title="View Stats (placeholder)">${HolafIcons.get('bar-chart')}</button>
+            <button type="button" class="action-btn harden-btn" title="Harden: inject flush_interval -1 + keep-alive transport into the existing Caddyfile">${HolafIcons.get('shield')}</button>
+            <button type="button" class="action-btn edit-btn" title="Edit">${HolafIcons.get('pencil')}</button>
+            <button type="button" class="action-btn delete-btn" title="Delete">${HolafIcons.get('trash')}</button>
         `;
     });
 }
